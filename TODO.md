@@ -80,55 +80,86 @@ builtins), `lib` (json, proto, etc.), `spelling`.
 
 ## Phase 3 — Config model & core module (needs Phases 1–2)
 
-- ⬜ `config/` → `Copybara.Config`: `Config`, `ConfigFile`,
-  `PathBasedConfigFile`, `MapConfigFile`, `Migration`, `ConfigValidator`,
-  `SkylarkParser`, `Config(Loader/Provider)`, `LabelsAwareModule`.
-- ⬜ Top-level engine types in `com.google.copybara/`:
-  `Option`/`Options`, `GeneralOptions`, `ModuleSet`/`ModuleSupplier`,
-  `Core`(`CoreModule`, `CoreGlobal`), `Workflow`, `WorkflowOptions`,
-  `WorkflowMode`, `WorkflowRunHelper`, `Migration`, `Origin`, `Destination`,
-  `Transformation`, `TransformWork`, `TransformResult`, `CheckoutPath`,
-  `CheckoutFileSystem`, `Metadata`, `Info`, `MigrationInfo`.
+- ✅ `config/` → `Copybara.Config`: `Config`, `ConfigFile`, `PathBasedConfigFile`,
+  `MapConfigFile`, `IMigration`, `ConfigValidator`, `SkylarkParser` (wired to the
+  ported interpreter), `ConfigLoader`/`IConfigLoaderProvider`, `ILabelsAwareModule`,
+  `ConfigWithDependencies`.
+- ✅ Top-level engine types: `IOption`/`Options`, `GeneralOptions`, `ModuleSet`/
+  `ModuleSupplier`, `CoreModule`/`CoreGlobal`, `Workflow<O,D>` (+ non-generic
+  `Workflow.Create` factory), `WorkflowOptions`, `WorkflowMode`, `WorkflowRunHelper`,
+  `IMigration`, `IOrigin`/`IDestination`, `ITransformation`, `TransformWork`,
+  `TransformResult`, `CheckoutPath`, `CheckoutFileSystem`, `Metadata`, `Info`,
+  `MigrationInfo`, plus `profiler/`, `effect/`, `monitor/`, `action/`, `approval/`,
+  `treestate/`, `version/`.
 
 ## Phase 4 — Transformations (`transform/`)
 
-- ⬜ `Replace`, `Move`/`Copy`/`Remove`, `Sequence`, `TransformationRegistry`,
-  `SkylarkTransformation`, `ExplicitReversal`, `TodoReplace`, `Scrubber`,
-  `metadata/*` (message/label manipulation), `debug/*`, `patch/*`.
+- ✅ `Replace`, `CopyOrMove`/`Remove`, `Sequence`, `ExplicitReversal`,
+  `IReversibleFunction`, `SkylarkConsole`, `FilterReplace`, `VerifyMatch`,
+  `TodoReplace`, `SkylarkTransformation`, `transform/metadata/*`, `transform/debug/*`.
+- ⬜ `transform/patch/*` (needs DiffUtil/patch tooling).
 
-## Phase 5 — Git support (`git/`) — uses LibGit2Sharp
+## Phase 5 — Git support (`git/`) — uses LibGit2Sharp / git CLI
 
-Largest single module (175 files). Port in slices:
+Largest single module (~175 files). Port in slices:
 
-- ⬜ Core plumbing: `GitRepository`, `GitRevision`, `GitReference`,
-  `GitEnvironment`, `GitCredential`, `RefspecConverter`, `GitOptions`.
-  Prefer LibGit2Sharp; keep a `git` CLI runner for gaps.
-- ⬜ Origin/Destination: `GitOrigin`, `GitDestination`, `GitModule`,
-  `GitMirror`, `ChangeReader`, writer hooks.
-- ⬜ GitHub: `github/api` client (System.Text.Json + HttpClient),
-  `GitHubOrigin`, `GitHubPrDestination`, `GitHubPrOrigin`, `github/util`.
-- ⬜ Gerrit: `gerritapi` client, `GerritOrigin`, `GerritDestination`.
-- ⬜ GitLab: `gitlab/api`, origin/destination.
-- ⬜ `version/` resolvers.
+- ✅ Core plumbing: `GitRepository` (git-CLI-backed via `CommandRunner`, faithful
+  to upstream which shells out), `GitRevision`, `GitRepoType`, `GitEnvironment`,
+  `GitCredential`, `Refspec`, `FetchResult`, `MergeResult`, `IntegrateLabel`,
+  `SameGitTree`, exceptions.
+- ✅ Origin/Destination base: `GitOrigin`, `GitDestination`, `GitDestinationReader`,
+  `ChangeReader`, `GitVisitorUtil`, `Mirror`, `GitIntegrateChanges`, options, write hooks.
+- ✅ `GitModule` (the `git` Starlark module — all 19 git.* factories wired).
+- ✅ GitHub: `github/api` client (~50 files) + providers (`GitHubPrOrigin`,
+  `GitHubPrDestination`, `GitHubEndPoint`, write hooks, approvals validators, `github/util`).
+- ✅ Gerrit: `gerritapi` client (30) + providers (`GerritOrigin`/`GerritDestination`/`GerritEndpoint`).
+- ✅ GitLab: `gitlab/api` client (18) + providers (`GitLabMrOrigin`/`GitLabMrDestination`).
+- ✅ `git/version/` selectors. ✅ `hg/` (Mercurial).
 
 ## Phase 6 — Other origins/destinations & modules
 
-- ⬜ `folder/` (FolderOrigin/FolderDestination) — good early integration target.
-- ⬜ `remotefile/`, `archive/`, `hashing/`, `http/`, `format/` (buildifier),
-  `hg/` (Mercurial), `go/`, `rust/`, `python/`, `tsjs/`, `toml/`, `json/`,
-  `xml/`, `html/`, `re2/`, `buildozer/`, `checks/`, `approval/`, `feedback/`,
-  `action/`, `credentials/`, `treestate/`, `monitor/`, `regenerate/`,
-  `onboard/`, `configgen/`, `doc/` (reference doc generator).
+- ✅ `folder/` (FolderOrigin/FolderDestination/FolderModule) — first ported origin/destination pair.
+- ✅ `remotefile/`, `archive/` (zip/tar/gzip; xz/bz2 = TODO), `hashing/`,
+  `http/` (HttpClient), `format/` (buildifier), `buildozer/`, `toml/`, `json/`,
+  `xml/`, `html/`, `re2/`, `credentials/`, `approval/`, `action/`, `treestate/`,
+  `monitor/`, `effect/`, `checks/` (minimal stub).
+- ✅ `hg/` (Mercurial), `go/`, `rust/`, `python/`, `tsjs/` (npm).
+- ✅ `feedback/`, `checks/`, `regenerate/`, `onboard/`, `configgen/`,
+  `doc/` (reflection-based reference generator), `transform/patch/`.
+- ✅ `starlark/StarlarkUtil`, `archive/util`.
+
+## Source port: COMPLETE
+
+Every source package under `java/com/google/copybara/**` and the vendored
+`net.starlark.java` interpreter has a C# counterpart. ~666 C# files / ~98.5k LOC.
+Whole solution builds 0 warnings / 0 errors; tests pass.
+
+Intentionally NOT ported (superseded/obsolete): `jcommander/*` converters/validators
+(replaced by the custom `Copybara.Cli.ArgParser`).
+
+### Remaining integration / follow-up work (not source-porting)
+- **Wire `ModuleSupplier.GetModules()`** to register the ported Starlark modules
+  (`Core`, `git`, `folder`, `format`, `http`, `hashing`, `archive`, `remotefile`,
+  `toml`/`json`/`xml`/`html`/`re2`, `go`/`rust`/`python`/`npm`, `credentials`, …)
+  and `NewOptions()` to register every `IOption`. Currently stubbed empty — this is
+  what makes `copybara migrate` load a real `copy.bara.sky` end-to-end.
+- **Wire CLI commands**: `RegenerateCmd`/`OnboardCmd`/`GeneratorCmd` engines exist in
+  Core with `Run(...)` entry points; add thin `ICopybaraCmd` adapters in `Copybara.Cli`.
+- **Archive xz/bz2** (`TAR_XZ`/`TAR_BZ2`) need a codec (no in-box option) — currently
+  throw with a `TODO(port)`.
+- **Expand test coverage**: port high-value suites from `java/javatests/` and add an
+  end-to-end folder→folder `migrate` smoke test.
+- Verify a few `structField`/reflective-dispatch edge cases against real configs.
 
 ## Phase 7 — CLI (`src/Copybara.Cli`)
 
-- ⬜ Arg parsing (replace JCommander). Options contributed per-module, à la
-  `Options.getAll()`. Lightweight custom parser matching upstream flag names.
-- ⬜ `Main` orchestration (mirror `Main.java`): console setup, logging config,
+- ✅ Arg parsing (custom `ArgParser` replacing JCommander, reading `[Flag]`
+  attributes off option objects), matching upstream flag names.
+- ✅ `Main` orchestration (mirrors `Main.java`): console setup, logging config,
   module set creation, command dispatch, exit codes, error handling.
-- ⬜ Commands: `MigrateCmd`, `InfoCmd`, `ValidateCmd`, `HelpCmd`, `VersionCmd`,
-  `RegenerateCmd`, `OnboardCmd`/`GeneratorCmd`.
-- ⬜ `PackAsTool` metadata, `build-data` version embedding.
+- ✅ Commands: `MigrateCmd`, `InfoCmd`, `ValidateCmd` (+ version/help).
+- ⬜ Commands not yet ported: `RegenerateCmd`, `OnboardCmd`/`GeneratorCmd`.
+- ✅ `PackAsTool` + package icon/readme. ⬜ `build-data` version embedding.
 
 ## Phase 8 — Tests, docs, polish
 

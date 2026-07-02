@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-// Entry point for the `copybara` .NET tool.
-// The full CLI (arg parsing, command dispatch, Main orchestration) is ported in Phase 7.
-// This is a placeholder that keeps the tool runnable while the engine is built out.
+// Entry point for the `copybara` .NET tool. Delegates to Copybara.Cli.Main, which mirrors the
+// orchestration flow of the upstream com.google.copybara.Main class.
 
-Console.WriteLine("Copybara (.NET port) — under construction. See TODO.md for status.");
-return 0;
+using Copybara.Cli;
+using Copybara.Util;
+
+return (int)new Main().Run(args);
