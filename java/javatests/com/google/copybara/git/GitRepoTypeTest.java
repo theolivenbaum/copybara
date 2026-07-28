@@ -23,10 +23,13 @@ import static com.google.copybara.util.CommandRunner.DEFAULT_TIMEOUT;
 import com.google.common.base.Strings;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.exception.RepoException;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
 import com.google.copybara.testing.OptionsBuilder;
 import com.google.copybara.testing.git.GitTestUtil;
 import com.google.copybara.util.console.Message.MessageType;
 import com.google.copybara.util.console.testing.TestingConsole;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -36,10 +39,11 @@ import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class GitRepoTypeTest {
+
+  @TestParameter private GitHashAlgorithm repoFormat;
 
   private Path repoGitDir;
   private Path fileRepoDir;
@@ -73,11 +77,12 @@ public class GitRepoTypeTest {
               boolean partialFetch,
               Optional<Integer> depth) {
             interceptedFetches.add(new String[] {url, ref});
-            return new GitRevision(this, Strings.repeat("0", 40));
+            return new GitRevision(
+                this, Strings.repeat("0", repoFormat == GitHashAlgorithm.SHA256 ? 64 : 40));
           }
         };
 
-    testRepo.init();
+    testRepo.init(repoFormat);
     prepareFileRepo();
     console = new TestingConsole();
     generalOptions = new OptionsBuilder().setConsole(console).build().get(GeneralOptions.class);
@@ -86,11 +91,11 @@ public class GitRepoTypeTest {
   private void disableFetchMocks() throws RepoException {
     testRepo = GitRepository.newBareRepo(repoGitDir, getGitEnv(),  /*verbose=*/true,
         DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    testRepo.init();
+    testRepo.init(repoFormat);
   }
 
   private void prepareFileRepo() throws Exception {
-    fileRepo = GitRepository.newRepo(/*verbose*/ true, fileRepoDir, getGitEnv()).init();
+    fileRepo = GitRepository.newRepo(/*verbose*/ true, fileRepoDir, getGitEnv()).init(repoFormat);
     Files.write(fileRepoDir.resolve("foo"), new byte[]{});
 
     fileRepo.add().files("foo").run();
@@ -162,20 +167,36 @@ public class GitRepoTypeTest {
 
   @Test
   public void testGitResolveUrl() throws Exception {
-    assertThat(GitRepoType.GIT.resolveRef(testRepo, "dont use", "https://github.com/google/example",
-        generalOptions, /*describeVersion=*/false, /*partialFetch=*/ false,
-        Optional.empty()).asString())
-        .hasLength(40);
+    assertThat(
+            GitRepoType.GIT
+                .resolveRef(
+                    testRepo,
+                    "dont use",
+                    "https://github.com/google/example",
+                    generalOptions,
+                    /* describeVersion= */ false,
+                    /* partialFetch= */ false,
+                    Optional.empty())
+                .asString())
+        .hasLength(repoFormat.getLength());
     assertFetch("https://github.com/google/example", "HEAD");
     assertUrlOverwritten();
   }
 
   @Test
   public void testGitResolveUrlAndRef() throws Exception {
-    assertThat(GitRepoType.GIT.resolveRef(testRepo, "dont use",
-        "https://github.com/google/example master", generalOptions,
-        /*describeVersion=*/false, /*partialFetch=*/ false, Optional.empty()).asString())
-        .hasLength(40);
+    assertThat(
+            GitRepoType.GIT
+                .resolveRef(
+                    testRepo,
+                    "dont use",
+                    "https://github.com/google/example master",
+                    generalOptions,
+                    /* describeVersion= */ false,
+                    /* partialFetch= */ false,
+                    Optional.empty())
+                .asString())
+        .hasLength(repoFormat.getLength());
     assertFetch("https://github.com/google/example", "master");
     assertUrlOverwritten();
   }
@@ -183,20 +204,36 @@ public class GitRepoTypeTest {
   @Test
   public void testGitResolveUrlAndTag() throws Exception {
     fileRepo.simpleCommand("tag", "v1.0.0");
-    assertThat(GitRepoType.GIT.resolveRef(testRepo, "dont use",
-        "https://github.com/google/example v1.0.0", generalOptions,
-        /*describeVersion=*/false, /*partialFetch=*/ false, Optional.empty()).asString())
-        .hasLength(40);
+    assertThat(
+            GitRepoType.GIT
+                .resolveRef(
+                    testRepo,
+                    "dont use",
+                    "https://github.com/google/example v1.0.0",
+                    generalOptions,
+                    /* describeVersion= */ false,
+                    /* partialFetch= */ false,
+                    Optional.empty())
+                .asString())
+        .hasLength(repoFormat.getLength());
     assertFetch("https://github.com/google/example", "v1.0.0");
     assertUrlOverwritten();
   }
 
   @Test
   public void testGitResolveUrlAndCompleteRef() throws Exception {
-    assertThat(GitRepoType.GIT.resolveRef(testRepo, "dont use",
-        "https://github.com/google/example refs/pull/1234/head", generalOptions,
-        /*describeVersion=*/false, /*partialFetch=*/ false, Optional.empty()).asString())
-        .hasLength(40);
+    assertThat(
+            GitRepoType.GIT
+                .resolveRef(
+                    testRepo,
+                    "dont use",
+                    "https://github.com/google/example refs/pull/1234/head",
+                    generalOptions,
+                    /* describeVersion= */ false,
+                    /* partialFetch= */ false,
+                    Optional.empty())
+                .asString())
+        .hasLength(repoFormat.getLength());
     assertFetch("https://github.com/google/example", "refs/pull/1234/head");
     assertUrlOverwritten();
   }

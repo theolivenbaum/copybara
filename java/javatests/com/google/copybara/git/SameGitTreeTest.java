@@ -30,11 +30,15 @@ import java.nio.file.Path;
 import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-  @RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class SameGitTreeTest {
+
+  @TestParameter private GitHashAlgorithm repoFormat;
 
     private GitRepository repository;
     private Path workdir;
@@ -54,7 +58,7 @@ public class SameGitTreeTest {
       repository = GitRepository
           .newBareRepo(gitDir, getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false)
           .withWorkTree(workdir);
-      repository.init();
+    repository.init(repoFormat);
     }
 
     @Test
@@ -62,7 +66,7 @@ public class SameGitTreeTest {
       String branch = "test";
       // mock remote repo
       GitRepository mockRemoteRepo = repository.withWorkTree(workdir);
-      mockRemoteRepo.init();
+    mockRemoteRepo.init(repoFormat);
       mockRemoteRepo.simpleCommand("checkout", "-b", branch);
       Files.write(workdir.resolve("foo.txt"), new byte[]{});
       repository.add().files("foo.txt").run();
@@ -93,6 +97,6 @@ public class SameGitTreeTest {
       GitRepository repository = GitRepository.newBareRepo(gitDir,
           getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false)
           .withWorkTree(workTree);
-      return repository.init();
+    return repository.init(repoFormat);
     }
   }

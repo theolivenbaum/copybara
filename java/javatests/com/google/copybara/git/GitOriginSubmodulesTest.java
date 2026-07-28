@@ -30,11 +30,14 @@ import com.google.copybara.authoring.Authoring;
 import com.google.copybara.authoring.Authoring.AuthoringMappingMode;
 import com.google.copybara.exception.RepoException;
 import com.google.copybara.exception.ValidationException;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
 import com.google.copybara.testing.FileSubjects;
 import com.google.copybara.testing.OptionsBuilder;
 import com.google.copybara.testing.SkylarkTestExecutor;
 import com.google.copybara.util.Glob;
 import com.google.copybara.util.console.testing.TestingConsole;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -47,10 +50,11 @@ import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class GitOriginSubmodulesTest {
+
+  @TestParameter private GitHashAlgorithm repoFormat;
 
   private static final String GITMODULES = ".gitmodules";
   private Path checkoutDir;
@@ -167,7 +171,8 @@ public class GitOriginSubmodulesTest {
     // Create first child repo with one commit that is not reachable from primary
     Files.createDirectories(base.resolve("childRepo1"));
     GitRepository childRepo1 =
-        GitRepository.newRepo(/*verbose*/ false, base.resolve("childRepo1"), getGitEnv()).init();
+        GitRepository.newRepo(/*verbose*/ false, base.resolve("childRepo1"), getGitEnv())
+            .init(repoFormat);
     addFile(childRepo1, "bar", "1");
     commit(childRepo1, "first commit");
     childRepo1.simpleCommand("checkout", "-b", "some_branch");
@@ -211,7 +216,7 @@ public class GitOriginSubmodulesTest {
       throws IOException, RepoException, ValidationException {
     Files.createDirectories(base.resolve(name));
     GitRepository repo =
-        GitRepository.newRepo(/*verbose*/ false, base.resolve(name), getGitEnv()).init();
+        GitRepository.newRepo(/*verbose*/ false, base.resolve(name), getGitEnv()).init(repoFormat);
     commitAdd(repo, ImmutableMap.of(file, "1"));
     return repo;
   }
@@ -408,7 +413,7 @@ public class GitOriginSubmodulesTest {
                 false,
                 Duration.ofMinutes(1),
                 false)
-            .init();
+            .init(repoFormat);
 
     r3.fetch(
         "file://" + r1.getGitDir(),

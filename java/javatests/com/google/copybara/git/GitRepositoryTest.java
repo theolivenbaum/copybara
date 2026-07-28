@@ -49,6 +49,8 @@ import com.google.copybara.git.GitRevision.GitHashAlgorithm;
 import com.google.copybara.testing.git.GitTestUtil;
 import com.google.copybara.util.CommandOutput;
 import com.google.copybara.util.Glob;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -68,10 +70,11 @@ import java.util.stream.Collectors;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class GitRepositoryTest {
+
+  @TestParameter private GitHashAlgorithm repoFormat;
 
   private static final Author COMMITER = new Author("Commit Bara", "commitbara@example.com");
   private static final int SOME_LARGE_INPUT_SIZE = 256_000;
@@ -90,7 +93,7 @@ public class GitRepositoryTest {
     repository = GitRepository
         .newBareRepo(gitDir, getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false)
         .withWorkTree(workdir);
-    repository.init();
+    repository.init(repoFormat);
     defaultBranch = repository.simpleCommand("symbolic-ref", "--short", "HEAD")
         .getStdout().trim();
   }
@@ -98,7 +101,7 @@ public class GitRepositoryTest {
   @Test
   public void testShowRef() throws RepoException, IOException {
     GitRepository repo = repository.withWorkTree(workdir);
-    repo.init();
+    repo.init(repoFormat);
     ImmutableMap<String, GitRevision> before = repo.showRef();
 
     assertThat(before).isEmpty();
@@ -118,7 +121,7 @@ public class GitRepositoryTest {
   @Test
   public void testShowDiff() throws Exception {
     GitRepository repo = repository.withWorkTree(workdir);
-    repo.init();
+    repo.init(repoFormat);
 
     Files.write(workdir.resolve("foo.txt"), new byte[]{});
     repository.add().files("foo.txt").run();
@@ -140,7 +143,7 @@ public class GitRepositoryTest {
   @Test
   public void testCherrypick() throws Exception {
     GitRepository repo = repository.withWorkTree(workdir);
-    repo.init();
+    repo.init(repoFormat);
 
     GitRevision one = simpleChange(repo, "foo.txt", "1", "message_a");
     GitRevision two = simpleChange(repo, "foo.txt", "2", "message_b");
@@ -169,7 +172,7 @@ public class GitRepositoryTest {
   @Test
   public void testBranch() throws Exception {
     GitRepository repo = repository.withWorkTree(workdir);
-    repo.init();
+    repo.init(repoFormat);
 
     GitRevision headRef = simpleChange(repo, "foo.txt", "", "message_a");
 
@@ -253,7 +256,7 @@ public class GitRepositoryTest {
   public void testStatus() throws RepoException, IOException {
     GitRepository dest = GitRepository.newBareRepo(Files.createTempDirectory("destDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    dest.init();
+    dest.init(repoFormat);
 
     Files.write(workdir.resolve("renamed"), "renamed".getBytes(UTF_8));
     Files.write(workdir.resolve("deleted"), "deleted".getBytes(UTF_8));
@@ -299,7 +302,7 @@ public class GitRepositoryTest {
   public void testForceClean() throws RepoException, IOException {
     GitRepository dest = GitRepository.newBareRepo(Files.createTempDirectory("destDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    dest.init();
+    dest.init(repoFormat);
 
     Files.write(Files.createDirectories(workdir.resolve("some/folder")).resolve("file.txt"),
         "".getBytes(UTF_8));
@@ -461,10 +464,15 @@ public class GitRepositoryTest {
   private void checkLog(boolean body, boolean includeFiles) throws IOException, RepoException,
       ValidationException {
     workdir = Files.createTempDirectory("workdir");
-    this.repository = GitRepository.newBareRepo(Files.createTempDirectory("gitdir"),
-        getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false)
-        .withWorkTree(workdir)
-        .init();
+    this.repository =
+        GitRepository.newBareRepo(
+                Files.createTempDirectory("gitdir"),
+                getGitEnv(),
+                /* verbose= */ true,
+                DEFAULT_TIMEOUT,
+                /* noVerify= */ false)
+            .withWorkTree(workdir)
+            .init(repoFormat);
 
     Files.write(workdir.resolve("foo.txt"), "foo fooo fooo".getBytes(UTF_8));
     repository.add().files("foo.txt").run();
@@ -763,7 +771,7 @@ public class GitRepositoryTest {
   public void testFetch() throws Exception {
     GitRepository dest = GitRepository.newBareRepo(Files.createTempDirectory("destDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    dest.init();
+    dest.init(repoFormat);
 
     Files.write(workdir.resolve("foo.txt"), new byte[]{});
     repository.add().files("foo.txt").run();
@@ -832,7 +840,7 @@ public class GitRepositoryTest {
             /* noVerify= */ false,
             /* pushOptionsValidator= */ new GitRepository.PushOptionsValidator(Optional.empty()),
             testHook);
-    dest.init();
+    dest.init(repoFormat);
 
     ValidationException e =
         assertThrows(ValidationException.class, () -> dest.forceCheckout(dest.getPrimaryBranch()));
@@ -849,7 +857,7 @@ public class GitRepositoryTest {
             /*verbose=*/ true,
             DEFAULT_TIMEOUT,
             /*noVerify=*/ false);
-    local.init();
+    local.init(repoFormat);
     local.replaceLocalConfigField("fetch", "prune", "false");
     local.replaceLocalConfigField("fetch", "prune", "false");
     CommandOutput commandOutput = local.simpleCommand("config", "--get-all", "fetch.prune");
@@ -867,7 +875,7 @@ public class GitRepositoryTest {
             /* verbose= */ true,
             DEFAULT_TIMEOUT,
             /* noVerify= */ false);
-    local.init();
+    local.init(repoFormat);
 
     local.withHttpFollowRedirectsOption("true");
 
@@ -886,7 +894,7 @@ public class GitRepositoryTest {
             /* verbose= */ true,
             DEFAULT_TIMEOUT,
             /* noVerify= */ false);
-    local.init();
+    local.init(repoFormat);
     GitTestUtil.writeFile(workdir, "a/foo.txt", "a");
     repository.add().files("a/foo.txt").run();
     repository.simpleCommand("commit", "a/foo.txt", "-m", "message");
@@ -911,7 +919,7 @@ public class GitRepositoryTest {
   public void testPartialFetch() throws Exception {
     GitRepository local = GitRepository.newBareRepo(Files.createTempDirectory("localDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    local.init();
+    local.init(repoFormat);
     local = local.enablePartialFetch();
     GitTestUtil.writeFile(workdir, "a/foo.txt", "a");
     GitTestUtil.writeFile(workdir, "b/bar.txt", "b");
@@ -937,7 +945,7 @@ public class GitRepositoryTest {
   public void returnSameObjectWithPartialFetchSet() throws Exception {
     GitRepository local = GitRepository.newBareRepo(Files.createTempDirectory("localDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    local.init();
+    local.init(repoFormat);
     GitRepository sameLocal = local.enablePartialFetch();
 
     assertThat(sameLocal).isEqualTo(local);
@@ -947,7 +955,7 @@ public class GitRepositoryTest {
   public void testSparseCheckout() throws Exception {
     GitRepository local = GitRepository.newBareRepo(Files.createTempDirectory("localDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    local.init();
+    local.init(repoFormat);
     local = local.enablePartialFetch();
 
     local.withWorkTree(workdir).setSparseCheckout(ImmutableSet.of("foo", "bar"));
@@ -963,7 +971,7 @@ public class GitRepositoryTest {
     Path localWorkdir = Files.createTempDirectory("workdir");
     GitRepository local = GitRepository.newBareRepo(Files.createTempDirectory("localDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    local.init();
+    local.init(repoFormat);
     writeFile(workdir, "a/foo.txt", "a");
     writeFile(workdir, "b/bar.txt", "b");
     repository.add().files("a/foo.txt").run();
@@ -997,7 +1005,7 @@ public class GitRepositoryTest {
             /*verbose=*/ true,
             DEFAULT_TIMEOUT,
             /*noVerify=*/ false);
-    local.init();
+    local.init(repoFormat);
 
     writeFile(workdir, "a/foo.txt", "a");
     repository.add().files("a/foo.txt").run();
@@ -1056,7 +1064,7 @@ public class GitRepositoryTest {
             requestedFetches.add(refspecs);
             return super.fetch(url, prune, force, refspecs, partialFetch, Optional.empty(), tags);
           }
-        }.init();
+        }.init(repoFormat);
 
     Files.write(workdir.resolve("foo.txt"), "aaa".getBytes(UTF_8));
     repository.add().files("foo.txt").run();
@@ -1111,7 +1119,7 @@ public class GitRepositoryTest {
             requestedFetches.add(refspecs);
             return super.fetch(url, prune, force, refspecs, partialFetch, Optional.empty(), tags);
           }
-        }.init();
+        }.init(repoFormat);
 
     Files.write(workdir.resolve("foo.txt"), "aaa".getBytes(UTF_8));
     repository.add().files("foo.txt").run();
@@ -1161,7 +1169,7 @@ public class GitRepositoryTest {
             requestedFetches.add(refspecs);
             return super.fetch(url, prune, force, refspecs, partialFetch, Optional.empty(), tags);
           }
-        }.init();
+        }.init(repoFormat);
 
     Files.write(workdir.resolve("foo.txt"), "aaa".getBytes(UTF_8));
     repository.add().files("foo.txt").run();
@@ -1179,7 +1187,7 @@ public class GitRepositoryTest {
   public void testFetchInvalidGitRepo() throws Exception {
     GitRepository dest = GitRepository.newBareRepo(Files.createTempDirectory("destDir"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    dest.init();
+    dest.init(repoFormat);
 
     Path notAGitRepo = Files.createTempDirectory("not_a_git_repo");
     String fetchUrl = "file://" + notAGitRepo.toString();
@@ -1423,10 +1431,14 @@ public class GitRepositoryTest {
 
   @Test
   public void testPush() throws Exception {
-    GitRepository remote = GitRepository
-        .newBareRepo(Files.createTempDirectory("remote"), getGitEnv(), /*verbose=*/true,
-            DEFAULT_TIMEOUT, /*noVerify=*/ false)
-        .init();
+    GitRepository remote =
+        GitRepository.newBareRepo(
+                Files.createTempDirectory("remote"),
+                getGitEnv(),
+                /* verbose= */ true,
+                DEFAULT_TIMEOUT,
+                /* noVerify= */ false)
+            .init(repoFormat);
     Files.write(workdir.resolve("foo.txt"), new byte[]{});
     repository.add().files("foo.txt").run();
     repository.simpleCommand("commit", "-m", "message");
@@ -1505,7 +1517,7 @@ public class GitRepositoryTest {
   public void testPushPrune() throws Exception {
     GitRepository remote = GitRepository.newBareRepo(Files.createTempDirectory("remote"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    remote.init();
+    remote.init(repoFormat);
     Files.write(workdir.resolve("foo.txt"), new byte[]{});
     repository.add().files("foo.txt").run();
     repository.simpleCommand("commit", "-m", "message");
@@ -1541,17 +1553,19 @@ public class GitRepositoryTest {
   public void testPushWithZeroTimeout() throws Exception {
     GitRepository remote =
         GitRepository.newBareRepo(
-            Files.createTempDirectory("remote"),
-            getGitEnv(),
-            /*verbose=*/ true,
-            DEFAULT_TIMEOUT,
-            /*noVerify=*/ false).init();
+                Files.createTempDirectory("remote"),
+                getGitEnv(),
+                /* verbose= */ true,
+                DEFAULT_TIMEOUT,
+                /* noVerify= */ false)
+            .init(repoFormat);
     Files.writeString(workdir.resolve("foo.txt"), "");
 
     GitRepository origin =
         GitRepository.newBareRepo(
-                gitDir, getGitEnv(), /*verbose=*/ true, Duration.ZERO, /*noVerify=*/ false)
-            .withWorkTree(workdir).init();
+                gitDir, getGitEnv(), /* verbose= */ true, Duration.ZERO, /* noVerify= */ false)
+            .withWorkTree(workdir)
+            .init(repoFormat);
     origin.add().files("foo.txt").run();
     origin.simpleCommand("commit", "-m", "message");
 
@@ -1591,7 +1605,7 @@ public class GitRepositoryTest {
   public void doPushWithHook(GitRepository origin) throws Exception {
     GitRepository remote = GitRepository.newBareRepo(Files.createTempDirectory("remote"),
         getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false);
-    remote.init();
+    remote.init(repoFormat);
     Files.createDirectories(gitDir.resolve("hooks"));
     Path hook = gitDir.resolve("hooks/pre-commit");
     Files.write(
@@ -1631,7 +1645,7 @@ public class GitRepositoryTest {
                 /* verbose= */ true,
                 DEFAULT_TIMEOUT,
                 /* noVerify= */ false)
-            .init();
+            .init(repoFormat);
     Files.writeString(workdir.resolve("foo.txt"), "test content");
     repository.add().files("foo.txt").run();
     ZonedDateTime date = ZonedDateTime.now(ZoneId.of("-07:00")).truncatedTo(ChronoUnit.SECONDS);
@@ -1770,7 +1784,7 @@ public class GitRepositoryTest {
   public void headRef() throws Exception {
     String branch = "test";
     GitRepository repo = repository.withWorkTree(workdir);
-    repo.init();
+    repo.init(repoFormat);
     repo.simpleCommand("checkout", "-b", branch);
     Files.write(workdir.resolve("foo.txt"), new byte[]{});
     repository.add().files("foo.txt").run();
@@ -1784,7 +1798,7 @@ public class GitRepositoryTest {
   public void cheryPick() throws Exception {
     String branch = "test";
     GitRepository mockRemoteRepo = repository.withWorkTree(workdir);
-    mockRemoteRepo.init();
+    mockRemoteRepo.init(repoFormat);
     mockRemoteRepo.simpleCommand("checkout", "-b", branch);
     Files.write(workdir.resolve("foo.txt"), new byte[]{});
     repository.add().files("foo.txt").run();
@@ -1998,15 +2012,66 @@ public class GitRepositoryTest {
             newGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
 
     assertThat(newRepo.isInitialized()).isFalse();
-    newRepo = newRepo.init();
+    newRepo = newRepo.init(repoFormat);
     assertThat(newRepo.isInitialized()).isTrue();
   }
 
+  @Test
+  public void init_withFetchUrl_resolvesFormatAndInitializes() throws Exception {
+    Path remoteGitDir = Files.createTempDirectory("remote-git");
+    GitRepository remoteRepo =
+        GitRepository.newBareRepo(
+            remoteGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
+    Path localGitDir = Files.createTempDirectory("local-git");
+    GitRepository localRepo =
+        GitRepository.newBareRepo(
+            localGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
+
+    remoteRepo.init(GitHashAlgorithm.SHA256);
+    localRepo.init("file://" + remoteGitDir.toAbsolutePath());
+    String localFormat =
+        localRepo.simpleCommand("config", "extensions.objectformat").getStdout().trim();
+
+    assertThat(localRepo.isInitialized()).isTrue();
+    assertThat(localFormat).isEqualTo("sha256");
+  }
+
+  @Test
+  public void init_withMismatchingFormat_wipesAndReinitializes() throws Exception {
+    Path remoteGitDir = Files.createTempDirectory("remote-git");
+    GitRepository remoteRepo =
+        GitRepository.newBareRepo(
+            remoteGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
+    Path localGitDir = Files.createTempDirectory("local-git");
+    GitRepository localRepo =
+        GitRepository.newBareRepo(
+            localGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
+
+    remoteRepo.init(GitHashAlgorithm.SHA256);
+    localRepo.init((GitHashAlgorithm) null);
+
+    String localFormatBefore = "";
+    try {
+      localFormatBefore =
+          localRepo.simpleCommand("config", "extensions.objectformat").getStdout().trim();
+    } catch (RepoException e) {
+      // extensions.objectformat might not be configured if its default is sha1
+    }
+    assertThat(localFormatBefore).isNotEqualTo("sha256");
+
+    localRepo.init("file://" + remoteGitDir.toAbsolutePath());
+    String localFormatAfter =
+        localRepo.simpleCommand("config", "extensions.objectformat").getStdout().trim();
+
+    assertThat(localFormatAfter).isEqualTo("sha256");
+  }
+
   private GitRepository mockRepository(Path gitDir, Path workTree) throws RepoException {
-    GitRepository repository = GitRepository.newBareRepo(gitDir,
-        getGitEnv(), /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false)
-        .withWorkTree(workTree);
-    return repository.init();
+    GitRepository repository =
+        GitRepository.newBareRepo(
+                gitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false)
+            .withWorkTree(workTree);
+    return repository.init(repoFormat);
   }
 
   private void setUpForTagTest(String tagMsg)

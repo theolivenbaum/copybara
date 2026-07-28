@@ -165,7 +165,8 @@ public final class GitDestinationOptions implements Option {
                 gitOptions.getGitEnvironment(generalOptions.getEnvironment()),
                 generalOptions.repoTimeout,
                 gitOptions.gitNoVerify,
-                gitOptions.getPushOptionsValidator()));
+                gitOptions.getPushOptionsValidator()),
+            url);
       }
       throw new RepoException(path + " is not empty and is not a git repository");
     } catch (IOException e) {

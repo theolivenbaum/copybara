@@ -59,6 +59,7 @@ import com.google.copybara.git.github.api.CheckRun;
 import com.google.copybara.git.github.api.CombinedStatus;
 import com.google.copybara.git.github.api.GitHubApi;
 import com.google.copybara.git.github.api.GitHubApi.IssuesAndPullRequestsSearchRequestParams;
+import com.google.copybara.git.github.api.GitHubGraphQLApi;
 import com.google.copybara.git.github.api.Issue;
 import com.google.copybara.git.github.api.IssuesAndPullRequestsSearchResults;
 import com.google.copybara.git.github.api.Label;
@@ -104,6 +105,7 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
   public static final String GITHUB_PR_NUMBER_LABEL = "GITHUB_PR_NUMBER";
   public static final String GITHUB_BASE_BRANCH = "GITHUB_BASE_BRANCH";
   public static final String GITHUB_BASE_BRANCH_SHA1 = "GITHUB_BASE_BRANCH_SHA1";
+  public static final String GITHUB_BASE_BRANCH_SHA = "GITHUB_BASE_BRANCH_SHA";
   public static final String GITHUB_PR_USE_MERGE = "GITHUB_PR_USE_MERGE";
   public static final String GITHUB_PR_TITLE = "GITHUB_PR_TITLE";
   public static final String GITHUB_PR_URL = "GITHUB_PR_URL";
@@ -254,12 +256,12 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
 
   @Override
   public GitRevision resolveLastRev(String reference) throws RepoException, ValidationException {
-    String sha1Part = Splitter.on(" ").split(reference).iterator().next();
-    Matcher matcher = GitRevision.COMPLETE_GIT_HASH_PATTERN.matcher(sha1Part);
+    String shaPart = Splitter.on(" ").split(reference).iterator().next();
+    Matcher matcher = GitRevision.COMPLETE_GIT_HASH_PATTERN.matcher(shaPart);
     // Note that this might not work if the PR is for a different branch than the imported to
     // the destination. But in this case we cannot do that much apart from --force.
     if (matcher.matches()) {
-      return new GitRevision(getRepository(), getRepository().parseRef(sha1Part));
+      return new GitRevision(getRepository(), getRepository().parseRef(shaPart));
     }
     throw new CannotResolveRevisionException(String.format("'%s' is not a valid SHA.", reference));
   }
@@ -331,7 +333,13 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
     checkPrBranch(project, prData);
     checkRequiredLabels(api, project, prData);
     checkRequiredStatusContextNames(api, project, prData);
-    checkRequiredCheckRuns(api, project, prData);
+    if (generalOptions.isTemporaryFeature("use_graphql_api_for_check_runs", false)) {
+      GitHubGraphQLApi graphqlApi =
+          gitHubOptions.newGitHubGraphQLApi(ghHost.getHost(), project, null, credentials, console);
+      checkRequiredCheckRuns(graphqlApi, project, prData);
+    } else {
+      checkRequiredCheckRuns(api, project, prData);
+    }
     checkReviewApprovers(api, project, prData, labels);
 
     // Fetch also the baseline branch. It is almost free and doing a roundtrip later would hurt
@@ -414,12 +422,12 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
     String refForMigration = actuallyUseMerge ? LOCAL_PR_MERGE_REF : LOCAL_PR_HEAD_REF;
     GitRevision gitRevision = getRepository().resolveReference(refForMigration);
 
-    String headPrSha1 = getRepository().resolveReference(LOCAL_PR_HEAD_REF).getHash();
+    String headPrSha = getRepository().resolveReference(LOCAL_PR_HEAD_REF).getHash();
     String integrateLabel = new GitHubPrIntegrateLabel(getRepository(), generalOptions,
         project, prNumber,
         prData.getHead().getLabel(),
         // The integrate SHA has to be HEAD of the PR not the merge ref, even if use_merge = True
-        headPrSha1)
+        headPrSha)
         .toString();
 
     labels.putAll(
@@ -428,11 +436,12 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
     labels.put(GITHUB_PR_NUMBER_LABEL, Integer.toString(prNumber));
     labels.put(GitModule.DEFAULT_INTEGRATE_LABEL, integrateLabel);
     labels.put(GITHUB_BASE_BRANCH, prData.getBase().getRef());
-    labels.put(GITHUB_PR_HEAD_SHA, headPrSha1);
+    labels.put(GITHUB_PR_HEAD_SHA, headPrSha);
     labels.put(GITHUB_PR_USE_MERGE, Boolean.toString(actuallyUseMerge));
 
     String mergeBase = getRepository().mergeBase(refForMigration, LOCAL_PR_BASE_BRANCH);
     labels.put(GITHUB_BASE_BRANCH_SHA1, mergeBase);
+    labels.put(GITHUB_BASE_BRANCH_SHA, mergeBase);
 
     labels.put(GITHUB_PR_TITLE, prData.getTitle());
     labels.put(GITHUB_PR_BODY, prData.getBody());
@@ -544,6 +553,29 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
     }
   }
 
+  private void checkRequiredCheckRuns(GitHubGraphQLApi api, String project, PullRequest prData)
+      throws ValidationException, RepoException {
+    Set<String> requiredCheckRuns = getRequiredCheckRuns();
+    if (forceImport() || requiredCheckRuns.isEmpty()) {
+      return;
+    }
+
+    String owner = project.substring(0, project.indexOf('/'));
+    String repo = project.substring(project.indexOf('/') + 1);
+
+    ImmutableList<CheckRun> checkRuns =
+        api.getCheckRunsByNameFilter(owner, repo, prData.getHead().getSha(), requiredCheckRuns);
+
+    ImmutableListMultimap.Builder<String, CheckRun> checkRunsByName =
+        ImmutableListMultimap.builder();
+    for (CheckRun run : checkRuns) {
+      if (run.getName() != null) {
+        checkRunsByName.put(run.getName(), run);
+      }
+    }
+    validateRequiredCheckRuns(checkRunsByName.build(), requiredCheckRuns, project, prData);
+  }
+
   /**
    * Check that the PR has a conclusion of "success" for each check_run whose name is in the list
    * provided in the `required_check_runs` param
@@ -562,36 +594,44 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
           requiredCheckRuns.size() <= MANUAL_CHECK_RUN_LOOKUP_THRESHOLD
               ? getCheckRunsByName(api, project, prData, requiredCheckRuns)
               : getCheckRuns(api, project, prData);
+      validateRequiredCheckRuns(observedCheckRuns, requiredCheckRuns, project, prData);
+    }
+  }
 
-      ImmutableSet.Builder<String> missingCheckRunsAggregator = ImmutableSet.builder();
+  private void validateRequiredCheckRuns(
+      ImmutableListMultimap<String, CheckRun> observedCheckRuns,
+      Set<String> requiredCheckRuns,
+      String project,
+      PullRequest prData)
+      throws EmptyChangeException {
+    ImmutableSet.Builder<String> missingCheckRunsAggregator = ImmutableSet.builder();
 
-      for (String requiredCheckRun : requiredCheckRuns) {
-        if (!observedCheckRuns.containsKey(requiredCheckRun)) {
-          missingCheckRunsAggregator.add(requiredCheckRun);
-          continue;
-        }
-        ImmutableList<CheckRun> matchingCheckRuns = observedCheckRuns.get(requiredCheckRun);
-        console.warnFmtIf(
-            matchingCheckRuns.size() > 1,
-            "Matching check run with name '%s' seen %s times. Consider using a"
-                + " more specific name to avoid ambiguity. The instances of this check run are: %s",
-            requiredCheckRun,
-            matchingCheckRuns.size(),
-            matchingCheckRuns);
-        boolean hasMatch =
-            Iterables.any(matchingCheckRuns, e -> e.getConclusion().equals("success"));
-        if (!hasMatch) {
-          missingCheckRunsAggregator.add(requiredCheckRun);
-        }
+    for (String requiredCheckRun : requiredCheckRuns) {
+      if (!observedCheckRuns.containsKey(requiredCheckRun)) {
+        missingCheckRunsAggregator.add(requiredCheckRun);
+        continue;
       }
-
-      if (!missingCheckRunsAggregator.build().isEmpty()) {
-        throw new EmptyChangeException(
-            String.format(
-                "Cannot migrate http://github.com/%s/pull/%d because the following check runs "
-                    + "have not been passed: %s",
-                project, prData.getNumber(), missingCheckRunsAggregator.build()));
+      ImmutableList<CheckRun> matchingCheckRuns = observedCheckRuns.get(requiredCheckRun);
+      console.warnFmtIf(
+          matchingCheckRuns.size() > 1,
+          "Matching check run with name '%s' seen %s times. Consider using a"
+              + " more specific name to avoid ambiguity. The instances of this check run are: %s",
+          requiredCheckRun,
+          matchingCheckRuns.size(),
+          matchingCheckRuns);
+      boolean hasMatch =
+          Iterables.any(matchingCheckRuns, e -> Objects.equals(e.getConclusion(), "success"));
+      if (!hasMatch) {
+        missingCheckRunsAggregator.add(requiredCheckRun);
       }
+    }
+
+    if (!missingCheckRunsAggregator.build().isEmpty()) {
+      throw new EmptyChangeException(
+          String.format(
+              "Cannot migrate http://github.com/%s/pull/%d because the following check runs "
+                  + "have not been passed: %s",
+              project, prData.getNumber(), missingCheckRunsAggregator.build()));
     }
   }
 
@@ -722,9 +762,12 @@ public class GitHubPrOrigin implements Origin<GitRevision> {
       public ImmutableList<GitRevision> findBaselinesWithoutLabel(
           GitRevision startRevision, int limit) throws RepoException, ValidationException {
         String baseline =
-            Iterables.getLast(startRevision.associatedLabels().get(GITHUB_BASE_BRANCH_SHA1), null);
+            Iterables.getLast(
+                startRevision.associatedLabels().get(GITHUB_BASE_BRANCH_SHA),
+                Iterables.getLast(
+                    startRevision.associatedLabels().get(GITHUB_BASE_BRANCH_SHA1), null));
         checkNotNull(
-            baseline, "%s label should be present in %s", GITHUB_BASE_BRANCH_SHA1, startRevision);
+            baseline, "%s label should be present in %s", GITHUB_BASE_BRANCH_SHA, startRevision);
 
         GitRevision baselineRev = getRepository().resolveReference(baseline);
         // Don't skip the first change as it is already the baseline

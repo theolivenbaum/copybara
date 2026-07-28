@@ -16,20 +16,19 @@
 package com.google.copybara.configgen;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.collect.ImmutableListMultimap.toImmutableListMultimap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.lang.Math.max;
 import static java.util.Comparator.comparingInt;
-import static java.util.stream.Collectors.collectingAndThen;
 import static java.util.stream.Collectors.joining;
 
 import com.google.common.base.Joiner;
-import com.google.common.base.Objects;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Sets;
 import com.google.common.hash.Hashing;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.util.Glob;
@@ -53,18 +52,18 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.BinaryOperator;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 /**
  * Given a set of files from the origin and a set of files from the destination, it generates
- * origin_globs, destination_globs and core.moves to minimize the number of transformations for
- * converting code from origin to destintion.
+ * origin_globs, destination_globs, core.moves, and core.copies to minimize the number of
+ * transformations for converting code from origin to destination.
  *
  * <p>Note that the generation is not perfect and should be reviewed by a human.
  */
@@ -163,8 +162,8 @@ public class ConfigGenHeuristics {
   public record PathAndScore(Path path, int score) {}
 
   /**
-   * Run the config generation to find a good origin_files, destination_files and core.moves needed
-   * to convert the code form {@code origin} to {@code destination}.
+   * Run the config generation to find a good origin_files, destination_files, core.moves, and
+   * core.copies needed to convert the code from {@code origin} to {@code destination}.
    *
    * @return an object containing all the heuristic results.
    */
@@ -174,28 +173,66 @@ public class ConfigGenHeuristics {
     Map<Path, PathAndScore> destinationToOriginMapping =
         getDestinationToOriginMapping(gitFiles, g3Files, generalOptions.console());
 
-    // Map of Origin file paths to destination file paths.
-    // If multiple destination file map to the same origin file, we preserve the mapping with the
-    // highest score.
-    Map<Path, Path> similarFiles =
+    // Map of Origin file paths to primary destination file paths.
+    // If multiple destination files map to the same origin file, we prefer the match with the
+    // same filename or the mapping with the highest score as the primary destination (move).
+    // Other high-scoring destinations exceeding the similarity threshold are treated as copies.
+    Map<Path, Path> similarFiles = new HashMap<>();
+    ImmutableList.Builder<GeneratorTransformation> copiesBuilder = ImmutableList.builder();
+    Set<Path> mappedDestinations = new HashSet<>();
+
+    ImmutableListMultimap<Path, PathAndScore> originToDests =
         destinationToOriginMapping.entrySet().stream()
             .collect(
-                Collectors.groupingBy(
+                toImmutableListMultimap(
                     e -> e.getValue().path(),
-                    collectingAndThen(
-                        Collectors.maxBy(comparingInt(e -> e.getValue().score())),
-                        e -> e.orElseThrow().getKey())));
+                    e -> new PathAndScore(e.getKey(), e.getValue().score())));
+
+    for (Path originPath : originToDests.keySet()) {
+      ImmutableList<PathAndScore> dests = originToDests.get(originPath);
+      // Prefer a destination with the exact same filename.
+      Optional<PathAndScore> filenameMatch =
+          dests.stream()
+              .filter(e -> e.path().getFileName().equals(originPath.getFileName()))
+              .findFirst();
+
+      Path primaryDest;
+      if (filenameMatch.isPresent()) {
+        primaryDest = filenameMatch.get().path();
+      } else {
+        primaryDest =
+            dests.stream().max(Comparator.comparingInt(PathAndScore::score)).orElseThrow().path();
+      }
+
+      similarFiles.put(originPath, primaryDest);
+      mappedDestinations.add(primaryDest);
+
+      // Treat remaining destinations as copies.
+      for (PathAndScore e : dests) {
+        Path destPath = e.path();
+        if (!destPath.equals(primaryDest)) {
+          copiesBuilder.add(new GeneratorCopy(originPath.toString(), destPath.toString()));
+          mappedDestinations.add(destPath);
+        }
+      }
+    }
 
     IncludesGlob originGlob = getOriginGlob(gitFiles, similarFiles, g3Files);
     ImmutableList<GeneratorMove> moves = generateMoves(similarFiles);
+    ImmutableList<GeneratorTransformation> allTransformations =
+        ImmutableList.<GeneratorTransformation>builder()
+            .addAll(moves)
+            .addAll(copiesBuilder.build())
+            .build();
+
     DestinationExcludePaths destinationExcludePaths =
         new DestinationExcludePaths(
-            getDestinationExcludePaths(g3Files, similarFiles, destinationOnlyPaths));
+            getDestinationExcludePaths(g3Files, mappedDestinations, destinationOnlyPaths));
     Optional<String> tagSeparator = getVersionStringSeparator(versions);
 
     return new ConfigGenHeuristics.Result(
         originGlob.glob,
-        new GeneratorTransformations(moves),
+        new GeneratorTransformations(allTransformations),
         destinationExcludePaths,
         tagSeparator.isPresent(),
         tagSeparator);
@@ -276,17 +313,27 @@ public class ConfigGenHeuristics {
   }
 
   /**
-   * Returns the set of files that are in the destination but not in the origin. This is the union
-   * the known destinationOnlyPaths and the files that are in g3Files but not in similarFiles.
+   * Returns minimized paths/globs covering destination-only files. This combines known
+   * destinationOnlyPaths with optimized patterns for unmatched g3Files.
    */
   private ImmutableSet<Path> getDestinationExcludePaths(
       ImmutableSet<Path> g3Files,
-      Map<Path, Path> similarFiles,
+      Set<Path> mappedDestinations,
       ImmutableSet<Path> destinationOnlyPaths) {
-    return Sets.union(
-            destinationOnlyPaths,
-            g3Files.stream().filter(p -> !similarFiles.containsValue(p)).collect(toImmutableSet()))
-        .immutableCopy();
+    ImmutableSet<Path> destinationOnly =
+        g3Files.stream().filter(p -> !mappedDestinations.contains(p)).collect(toImmutableSet());
+
+    ImmutableSet.Builder<Path> result = ImmutableSet.builder();
+    result.addAll(destinationOnlyPaths);
+
+    if (!destinationOnly.isEmpty()) {
+      IncludesGlob minGlob =
+          new DestinationExcludesGlob(ImmutableSet.of("**"), ImmutableSet.of())
+              .minimizeScore(destinationOnly, ImmutableSet.copyOf(mappedDestinations), 0);
+      minGlob.includes.forEach(p -> result.add(Path.of(p)));
+    }
+
+    return result.build();
   }
 
   /**
@@ -429,6 +476,40 @@ public class ConfigGenHeuristics {
     @Override
     protected IncludesGlob create(Set<String> includes, Set<String> excludes) {
       return new ExcludesGlob(includes, excludes);
+    }
+  }
+
+  /**
+   * Custom scoring for destination excludes. Rejects patterns if they catch any file we want to
+   * keep. Disallows the global wildcard ("**").
+   */
+  private static class DestinationExcludesGlob extends ExcludesGlob {
+    private DestinationExcludesGlob(Set<String> includes, Set<String> excludes) {
+      super(includes, excludes);
+    }
+
+    @Override
+    protected int score() {
+      // If excludes needs excludes, it is not a good excludes.
+      if (!super.excludes.isEmpty()) {
+        return Integer.MAX_VALUE;
+      }
+      // Never include all files, otherwise importing is pointless.
+      if (includes.contains("**")) {
+        return Integer.MAX_VALUE;
+      }
+
+      int penalty = 0;
+      // Prefer explicit paths over wildcards to optimize the glob.
+      if (includes.stream().anyMatch(i -> i.contains("*"))) {
+        penalty += 1;
+      }
+      return super.score() + penalty;
+    }
+
+    @Override
+    protected IncludesGlob create(Set<String> includes, Set<String> excludes) {
+      return new DestinationExcludesGlob(includes, excludes);
     }
   }
 
@@ -621,21 +702,31 @@ public class ConfigGenHeuristics {
     return result.build();
   }
 
-  /** Represents a core.move() to be included in the generation */
-  public static class GeneratorMove {
+  /** Base interface for transformations generated by heuristics. */
+  public interface GeneratorTransformation {
+    /** Returns the original path in the origin repository before the transformation. */
+    String getBefore();
 
+    /** Returns the target path in the destination repository after the transformation. */
+    String getAfter();
+  }
+
+  /** Abstract base class for generator transformations holding common fields and logic. */
+  public abstract static class AbstractGeneratorTransformation implements GeneratorTransformation {
     private final String before;
     private final String after;
 
-    public GeneratorMove(String before, String after) {
+    protected AbstractGeneratorTransformation(String before, String after) {
       this.before = before;
       this.after = after;
     }
 
+    @Override
     public String getBefore() {
       return before;
     }
 
+    @Override
     public String getAfter() {
       return after;
     }
@@ -645,35 +736,53 @@ public class ConfigGenHeuristics {
       if (this == o) {
         return true;
       }
-      if (!(o instanceof GeneratorMove)) {
+      if (o == null || getClass() != o.getClass()) {
         return false;
       }
-      GeneratorMove that = (GeneratorMove) o;
-      return Objects.equal(before, that.before)
-          && Objects.equal(after, that.after);
+      AbstractGeneratorTransformation that = (AbstractGeneratorTransformation) o;
+      return Objects.equals(before, that.before) && Objects.equals(after, that.after);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hashCode(before, after);
+      return Objects.hash(before, after);
+    }
+  }
+
+  /** Represents a core.move() to be included in the generation */
+  public static class GeneratorMove extends AbstractGeneratorTransformation {
+    public GeneratorMove(String before, String after) {
+      super(before, after);
     }
 
     @Override
     public String toString() {
-      return "core.move(\"" + before + "\", \"" + after + "\")";
+      return "core.move(\"" + getBefore() + "\", \"" + getAfter() + "\")";
+    }
+  }
+
+  /** Represents a core.copy() to be included in the generation */
+  public static class GeneratorCopy extends AbstractGeneratorTransformation {
+    public GeneratorCopy(String before, String after) {
+      super(before, after);
+    }
+
+    @Override
+    public String toString() {
+      return "core.copy(\"" + getBefore() + "\", \"" + getAfter() + "\")";
     }
   }
 
   /** Represents a collection of transformations to be included in the generation */
   public static class GeneratorTransformations {
-    private final ImmutableList<GeneratorMove> moves;
+    private final ImmutableList<GeneratorTransformation> transformations;
 
-    public GeneratorTransformations(ImmutableList<GeneratorMove> moves) {
-      this.moves = moves;
+    public GeneratorTransformations(ImmutableList<GeneratorTransformation> transformations) {
+      this.transformations = transformations;
     }
 
-    public ImmutableList<GeneratorMove> getMoves() {
-      return moves;
+    public ImmutableList<GeneratorTransformation> asList() {
+      return transformations;
     }
   }
 

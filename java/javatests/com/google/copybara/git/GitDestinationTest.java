@@ -27,6 +27,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.fail;
 
+import com.google.common.base.Ascii;
 import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
@@ -50,6 +51,7 @@ import com.google.copybara.exception.RepoException;
 import com.google.copybara.exception.ValidationException;
 import com.google.copybara.git.GitCredential.UserPassword;
 import com.google.copybara.git.GitRepository.GitLogEntry;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
 import com.google.copybara.git.testing.GitTesting;
 import com.google.copybara.revision.Change;
 import com.google.copybara.revision.Changes;
@@ -66,6 +68,8 @@ import com.google.copybara.util.Glob;
 import com.google.copybara.util.SequenceGlob;
 import com.google.copybara.util.console.Message.MessageType;
 import com.google.copybara.util.console.testing.TestingConsole;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,13 +83,15 @@ import java.util.List;
 import java.util.Map;
 import javax.annotation.Nullable;
 import net.starlark.java.eval.StarlarkList;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class GitDestinationTest {
+
+  @TestParameter private GitHashAlgorithm repoFormat;
 
   private String url;
   private String fetch;
@@ -112,7 +118,11 @@ public class GitDestinationTest {
     workdir = Files.createTempDirectory("workdir");
     console = new TestingConsole();
     options = getOptionsBuilder(console);
-    git("init", "--bare", repoGitDir.toString());
+    git(
+        "init",
+        "--bare",
+        "--object-format=" + Ascii.toLowerCase(repoFormat.name()),
+        repoGitDir.toString());
     options.gitDestination.committerEmail = "commiter@email";
     options.gitDestination.committerName = "Bara Kopi";
     destinationFiles = Glob.createGlob(ImmutableList.of("**"));
@@ -162,7 +172,8 @@ public class GitDestinationTest {
         git.destination(
             fetch = '%s',
             push = '%s',
-        )"""
+        )\
+        """
             .formatted(primaryBranch, primaryBranch),
         "missing 1 required positional argument: url");
   }
@@ -334,7 +345,7 @@ public class GitDestinationTest {
     assertThat(destinationResult.get(0).getErrors()).isEmpty();
     assertThat(destinationResult.get(0).getType()).isEqualTo(Type.CREATED);
     assertThat(destinationResult.get(0).getDestinationRef().getType()).isEqualTo("commit");
-    assertThat(destinationResult.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40}");
+    assertThat(destinationResult.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40,64}");
   }
 
   @Test
@@ -707,25 +718,28 @@ public class GitDestinationTest {
     String change = git("--git-dir", repoGitDir.toString(), "show", "HEAD");
     // Validate that we really have pushed the commit.
     assertThat(change).contains("test summary");
-    console.assertThat()
+    console
+        .assertThat()
         .matchesNext(MessageType.PROGRESS, "Git Destination: Fetching: file:.* refs/heads/.*")
-        .matchesNext(MessageType.WARNING,
-            "Git Destination: 'refs/heads/.*' doesn't exist in 'file://.*")
+        .matchesNext(
+            MessageType.WARNING, "Git Destination: 'refs/heads/.*' doesn't exist in 'file://.*")
         .matchesNext(MessageType.PROGRESS, "Git Destination: Checking out .*")
         .matchesNext(MessageType.PROGRESS, "Git Destination: Adding all files")
         .matchesNext(MessageType.PROGRESS, "Git Destination: Excluding files")
         .matchesNext(MessageType.PROGRESS, "Git Destination: Creating a local commit")
         .matchesNext(MessageType.VERBOSE, "Integrates for.*")
         // Validate that we showed the confirmation
-        .matchesNext(MessageType.INFO, "(?m)(\n|.)*test summary(\n|.)+"
-            + "diff --git a/test.txt b/test.txt\n"
-            + "new file mode 100644\n"
-            + "index 0000000\\.\\.f0eec86\n"
-            + "--- /dev/null\n"
-            + "\\+\\+\\+ b/test.txt\n"
-            + "@@ -0,0 \\+1 @@\n"
-            + "\\+some content\n"
-            + "\\\\ No newline at end of file\n")
+        .matchesNext(
+            MessageType.INFO,
+            "(?m)(\n|.)*test summary(\n|.)+"
+                + "diff --git a/test.txt b/test.txt\n"
+                + "new file mode 100644\n"
+                + "index 0000000\\.\\.[0-9a-f]{7,}\n"
+                + "--- /dev/null\n"
+                + "\\+\\+\\+ b/test.txt\n"
+                + "@@ -0,0 \\+1 @@\n"
+                + "\\+some content\n"
+                + "\\\\ No newline at end of file\n")
         .matchesNext(MessageType.WARNING, "Proceed with push to.*[?]")
         .matchesNext(MessageType.PROGRESS, "Git Destination: Pushing to .*")
         .containsNoMoreMessages();
@@ -1818,7 +1832,7 @@ public class GitDestinationTest {
     assertThat(result.get(0).getErrors()).isEmpty();
     assertThat(result.get(0).getType()).isEqualTo(Type.CREATED);
     assertThat(result.get(0).getDestinationRef().getType()).isEqualTo("commit");
-    assertThat(result.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40}");
+    assertThat(result.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40,64}");
 
     String firstCommitHash = repo().parseRef("refs_for_primary");
 
@@ -1829,7 +1843,7 @@ public class GitDestinationTest {
     assertThat(result.get(0).getErrors()).isEmpty();
     assertThat(result.get(0).getType()).isEqualTo(Type.CREATED);
     assertThat(result.get(0).getDestinationRef().getType()).isEqualTo("commit");
-    assertThat(result.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40}");
+    assertThat(result.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40,64}");
 
     // Make sure parent of second commit is the first commit.
     assertThat(repo().parseRef("refs_for_primary~1")).isEqualTo(firstCommitHash);
@@ -2146,7 +2160,8 @@ public class GitDestinationTest {
     process(writer, new DummyRevision("origin_ref1"));
 
     //    Path localPath = Files.createTempDirectory("local_repo");
-    GitRepository localRepo = GitRepository.newRepo(/*verbose*/ true, localPath, getEnv()).init();
+    GitRepository localRepo =
+        GitRepository.newRepo(/*verbose*/ true, localPath, getEnv()).init(repoFormat);
 
     assertThatCheckout(localRepo, primaryBranch)
         .containsFile("test.txt", "some content")
@@ -2174,6 +2189,36 @@ public class GitDestinationTest {
       assertThat(entries.get(2).body()).isEqualTo("change\n");
     }
     return localRepo;
+  }
+
+  @Test
+  public void testCrossFormatMigration() throws Exception {
+    fetch = primaryBranch;
+    push = primaryBranch;
+
+    GitHashAlgorithm originFormat =
+        (repoFormat == GitHashAlgorithm.SHA1) ? GitHashAlgorithm.SHA256 : GitHashAlgorithm.SHA1;
+
+    // Create an origin repository with the opposite format
+    Path originPath = Files.createTempDirectory("origin_repo");
+    GitRepository originRepo =
+        GitRepository.newRepo(/* verbose= */ true, originPath, getEnv()).init(originFormat);
+    com.google.copybara.testing.git.GitTestUtil.writeFile(
+        originPath, "migration.txt", "migrating format");
+    originRepo.add().files("migration.txt").run();
+    originRepo.simpleCommand("commit", "-m", "origin commit");
+    String originHash = originRepo.simpleCommand("rev-parse", "HEAD").getStdout().trim();
+
+    com.google.copybara.testing.git.GitTestUtil.writeFile(
+        workdir, "migration.txt", "migrating format");
+    DummyRevision dummyOriginRevision = new DummyRevision(originHash);
+    process(firstCommitWriter(), dummyOriginRevision);
+
+    assertThatCheckout(repo(), primaryBranch)
+        .containsFile("migration.txt", "migrating format")
+        .containsNoMoreFiles();
+    String body = lastCommit(primaryBranch).body();
+    assertThat(body).contains("DummyOrigin-RevId: " + originHash);
   }
 
   @Test

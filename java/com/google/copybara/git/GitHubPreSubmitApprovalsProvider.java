@@ -120,9 +120,15 @@ public class GitHubPreSubmitApprovalsProvider implements ApprovalsProvider {
     String prAuthor =
         Iterables.getOnlyElement(
             extractLabelValues(changes, labelFinder, GitHubPrOrigin.GITHUB_PR_USER));
-    String baselineSha =
-        Iterables.getOnlyElement(
-            extractLabelValues(changes, labelFinder, GitHubPrOrigin.GITHUB_BASE_BRANCH_SHA1));
+    ImmutableList<String> baselineShaValues;
+    try {
+      baselineShaValues =
+          extractLabelValues(changes, labelFinder, GitHubPrOrigin.GITHUB_BASE_BRANCH_SHA);
+    } catch (RepoException e) {
+      baselineShaValues =
+          extractLabelValues(changes, labelFinder, GitHubPrOrigin.GITHUB_BASE_BRANCH_SHA1);
+    }
+    String baselineSha = Iterables.getOnlyElement(baselineShaValues);
 
     // A bit counterintuitive, but it is actually backwards, [latest_change...earliest_change].
     // This finds the partition point where inclusively at the baseline index and to the right is a

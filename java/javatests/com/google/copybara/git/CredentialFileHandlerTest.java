@@ -28,6 +28,9 @@ import static org.mockito.Mockito.when;
 import com.google.copybara.credentials.ConstantCredentialIssuer;
 import com.google.copybara.credentials.CredentialIssuer;
 import com.google.copybara.credentials.TtlSecret;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -36,13 +39,13 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class CredentialFileHandlerTest {
 
+  @TestParameter private GitHashAlgorithm repoFormat;
   @Rule public final MockitoRule mocks = MockitoJUnit.rule();
   @Rule public final TestName name = new TestName();
 
@@ -125,7 +128,7 @@ public class CredentialFileHandlerTest {
         GitRepository.newBareRepo(
                 repoPath, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false)
             .withWorkTree(workPath)
-            .init();
+            .init(repoFormat);
     underTest1.install(repo, file);
     underTest2.install(repo, file);
     assertThat(repo.credentialFill("https://github.com/google/copybara").getUsername())
@@ -186,7 +189,7 @@ public class CredentialFileHandlerTest {
         GitRepository.newBareRepo(
                 repoPath, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false)
             .withWorkTree(workPath)
-            .init();
+            .init(repoFormat);
     underTest1.install(repo, file);
     underTest2.install(repo, file);
 
