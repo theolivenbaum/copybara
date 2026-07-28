@@ -245,6 +245,17 @@ Deliberately NOT ported (recorded here so the next sync doesn't re-litigate it):
   adapter just needs to set it.
 - `6c1aaa3`, `99ab4eb`, `33a7e6c`-style test-only and formatting changes.
 
+Fixed while reviewing this sync (pre-existing bug, unrelated to upstream):
+
+- `Starlark.Eval.ParamDescriptor.EvalDefault` only understood double-quoted strings and a
+  handful of hard-coded literals, and **threw** for anything else. That made
+  `CallUtils.GetAnnotatedMethods(typeof(GitModule))` and `…(typeof(CoreModule))` fail
+  outright — i.e. no real `copy.bara.sky` could ever have loaded — because those modules
+  use single-quoted defaults (`'master'`, `'.patch'`) and list displays
+  (`['refs/heads/*']`, `['TODO', 'NOTE']`). It now accepts both quote styles and falls
+  back to the real interpreter for everything else, memoized by expression, mirroring
+  upstream's `evalDefault`. `StarlarkDescriptorTests` locks this in.
+
 Known gaps surfaced while reviewing this sync (pre-existing, not caused by it):
 
 - `MergeImportTool` has no C# counterpart at all; `Workflow` references merge-import
