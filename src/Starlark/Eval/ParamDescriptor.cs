@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using System.Collections.Concurrent;
 using System.Reflection;
 using Starlark.Annot;
+using Starlark.Syntax;
 
 namespace Starlark.Eval;
 
@@ -126,8 +128,11 @@ public sealed class ParamDescriptor
             case "\"\"":
                 return "";
         }
-        // Quoted string literal.
-        if (expr.Length >= 2 && expr[0] == '"' && expr[^1] == '"')
+        // Quoted string literal. Starlark accepts both quote styles, and the ported modules use
+        // both (e.g. "FAKE_MERGE_AND_INCLUDE_FILES" and 'master').
+        if (expr.Length >= 2
+            && (expr[0] == '"' || expr[0] == '\'')
+            && expr[^1] == expr[0])
         {
             return expr.Substring(1, expr.Length - 2);
         }
@@ -136,7 +141,55 @@ public sealed class ParamDescriptor
         {
             return StarlarkInt.Of(l);
         }
-        throw new InvalidOperationException(
-            string.Format("unsupported default value expression for parameter {0}: {1}", name, expr));
+
+        // Anything else (list/tuple/dict displays, calls into the universe, …) needs the real
+        // evaluator, exactly as upstream's ParamDescriptor.evalDefault does. Results are memoized
+        // by expression because default values can be requested recursively.
+        return DefaultValueCache.GetOrAdd(expr, e => EvalDefaultWithInterpreter(name, e));
+    }
+
+    // A memoization of EvalDefault, keyed by expression.
+    private static readonly ConcurrentDictionary<string, object> DefaultValueCache = new();
+
+    private static object EvalDefaultWithInterpreter(string name, string expr)
+    {
+        if (Starlark.UNIVERSE == null)
+        {
+            throw new InvalidOperationException(string.Format(
+                "Attempted to evaluate a builtin method's parameter's default expr ('{0} = {1}')"
+                    + " prior to static initialization of Starlark.UNIVERSE. Either avoid this"
+                    + " initialization cycle or else add the expr to the bootstrap list in"
+                    + " ParamDescriptor.EvalDefault.",
+                name,
+                expr));
+        }
+
+        Module module = Module.Create();
+        using Mutability mu = Mutability.Create("Builtin param default init");
+        StarlarkThread thread = StarlarkThread.CreateTransient(mu, StarlarkSemantics.DEFAULT);
+        try
+        {
+            object? value = Starlark.Eval(
+                ParserInput.FromString(expr, "<default value>"),
+                global::Starlark.Syntax.FileOptions.DEFAULT,
+                module,
+                thread);
+            if (value == null)
+            {
+                throw new InvalidOperationException(string.Format(
+                    "default value expression for parameter {0} evaluated to nothing: {1}",
+                    name, expr));
+            }
+            // Default values are shared across every call of the builtin, so they must be immutable.
+            Starlark.CheckValid(value);
+            return value;
+        }
+        catch (Exception e) when (e is SyntaxError.Exception or EvalException)
+        {
+            throw new InvalidOperationException(
+                string.Format(
+                    "unsupported default value expression for parameter {0}: {1}", name, expr),
+                e);
+        }
     }
 }

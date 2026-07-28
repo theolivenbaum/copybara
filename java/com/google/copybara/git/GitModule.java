@@ -23,6 +23,7 @@ import static com.google.copybara.config.SkylarkUtil.convertFromNoneable;
 import static com.google.copybara.config.SkylarkUtil.convertToOptional;
 import static com.google.copybara.config.SkylarkUtil.stringToEnum;
 import static com.google.copybara.git.GitHubPrOrigin.GITHUB_BASE_BRANCH;
+import static com.google.copybara.git.GitHubPrOrigin.GITHUB_BASE_BRANCH_SHA;
 import static com.google.copybara.git.GitHubPrOrigin.GITHUB_BASE_BRANCH_SHA1;
 import static com.google.copybara.git.GitHubPrOrigin.GITHUB_PR_ASSIGNEE;
 import static com.google.copybara.git.GitHubPrOrigin.GITHUB_PR_BODY;
@@ -88,6 +89,7 @@ import com.google.copybara.git.github.util.GitHubHost;
 import com.google.copybara.git.github.util.GitHubUtil;
 import com.google.copybara.git.gitlab.GitLabOptions;
 import com.google.copybara.git.gitlab.api.entities.MergeRequest.DetailedMergeStatus;
+import com.google.copybara.templatetoken.LabelTemplate;
 import com.google.copybara.transform.Replace;
 import com.google.copybara.transform.patch.PatchTransformation;
 import com.google.copybara.util.RepositoryUtil;
@@ -187,7 +189,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
     boolean failIfCommonBaselineNotFound =
         options
             .get(GeneralOptions.class)
-            .isTemporaryFeature("GIT_INTEGRATE_FAIL_IF_COMMON_BASELINE_NOT_FOUND", false);
+            .isTemporaryFeature("GIT_INTEGRATE_FAIL_IF_COMMON_BASELINE_NOT_FOUND", true);
     boolean ignoreErrors = !failIfCommonBaselineNotFound;
     this.defaultGitIntegrate =
         StarlarkList.of(
@@ -205,7 +207,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
               + " formats as reference (When copybara is called in the form of `copybara config"
               + " workflow reference`):<br><ul><li>**Branch name:** For example"
               + " `master`</li><li>**An arbitrary reference:**"
-              + " `refs/changes/20/50820/1`</li><li>**A SHA-1:** Note that it has to be reachable"
+              + " `refs/changes/20/50820/1`</li><li>**A SHA:** Note that it has to be reachable"
               + " from the default refspec</li><li>**A Git repository URL and reference:**"
               + " `http://github.com/foo master`</li><li>**A GitHub pull request URL:**"
               + " `https://github.com/some_project/pull/1784`</li></ul><br>So for example,"
@@ -464,6 +466,21 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
                 "If we should ignore integrate errors and continue the migration without the"
                     + " integrate",
             defaultValue = "True"),
+        @Param(
+            name = "allow_unrelated_history",
+            named = true,
+            doc = "If true allow integrates of unrelated histories.",
+            defaultValue = "False"),
+        @Param(
+            name = "merge_commit_message",
+            named = true,
+            doc =
+                "The template for the merge commit message. Use ${MERGE_MSG} for default message"
+                    + " and ${SUMMARY_FROM_TRANSFORM} for summary of the transform. All other"
+                    + " labels from the TransformResult are available, but destination labels might"
+                    + " not. It will use the first label value if multiple are defined. See"
+                    + " metadata.replace_message for semantics",
+            defaultValue = "\"${MERGE_MSG}\"")
       })
   @Example(
       title = "Integrate changes from a review url",
@@ -481,10 +498,38 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
               + " is found, it will fetch the git url and add that change as an additional parent"
               + " to the migration commit (merge). It will fake-merge any change from the url that"
               + " matches destination_files but it will include changes not matching it.")
-  public GitIntegrateChanges integrate(String label, String strategy, Boolean ignoreErrors)
+  @Example(
+      title = "Integrate changes with a custom merge commit message",
+      before = "Assuming we want to customize the merge commit message:",
+      code =
+          "git.destination(\n"
+              + "        url = \"https://example.com/some_git_repo\",\n"
+              + "        integrates = [\n"
+              + "            git.integrate(\n"
+              + "                merge_commit_message = \"Merged: ${SUMMARY_FROM_TRANSFORM} \\n"
+              + "\\n"
+              + "Original: ${MERGE_MSG} \\n"
+              + "\\n"
+              + "Ref: ${CONTEXT_REFERENCE}\"\n"
+              + "            )\n"
+              + "        ],\n"
+              + ")",
+      after =
+          "This will use the summary of the transform result, the default merge message,"
+              + " and the context reference to construct the final merge commit message.")
+  public GitIntegrateChanges integrate(
+      String label,
+      String strategy,
+      Boolean ignoreErrors,
+      Boolean allowUnrelatedHistory,
+      String mergeCommitMessage)
       throws EvalException {
     return new GitIntegrateChanges(
-        label, stringToEnum("strategy", strategy, Strategy.class), ignoreErrors);
+        label,
+        stringToEnum("strategy", strategy, Strategy.class),
+        ignoreErrors,
+        allowUnrelatedHistory != null && allowUnrelatedHistory,
+        new LabelTemplate(mergeCommitMessage));
   }
 
   @SuppressWarnings("unused")
@@ -930,7 +975,10 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
               + ": The name of the branch which serves as the base for the Pull Request.\n"
               + "  - "
               + GITHUB_BASE_BRANCH_SHA1
-              + ": The SHA-1 of the commit used as baseline. Generally, the baseline commit is the"
+              + " Use GITHUB_BASE_BRANCH_SHA instead.\n"
+              + "  - "
+              + GITHUB_BASE_BRANCH_SHA
+              + ": The commit hash used as baseline. Generally, the baseline commit is the"
               + " point of divergence between the PR's 'base' and 'head' branches. When `use_merge"
               + " = True` is specified, the baseline is instead the tip of the PR's base branch.\n"
               + "  - "
@@ -948,7 +996,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
               + ": GitHub url of the Pull Request.\n"
               + "  - "
               + GITHUB_PR_HEAD_SHA
-              + ": The SHA-1 of the head commit of the pull request.\n"
+              + ": The SHA of the head commit of the pull request.\n"
               + "  - "
               + GITHUB_PR_USER
               + ": The login of the author the pull request.\n"

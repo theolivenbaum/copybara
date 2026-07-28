@@ -59,6 +59,12 @@ public class PatchingOptions : IOption
     internal string QuiltBin { get; set; } = "quilt";
 
     /// <summary>
+    /// Controls whether the quilt transformation calls <c>quilt refresh</c> to recreate
+    /// fuzzily-matched patches.
+    /// </summary>
+    public bool QuiltRefreshPatches { get; set; } = true;
+
+    /// <summary>
     /// Applies the diff into a directory tree.
     ///
     /// <para><paramref name="diffContents"/> is the result of invoking

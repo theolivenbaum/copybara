@@ -26,6 +26,7 @@ import static com.google.copybara.util.Glob.affectsRoots;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
+import com.google.common.base.MoreObjects.ToStringHelper;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
@@ -62,7 +63,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
-import com.google.common.base.MoreObjects.ToStringHelper;
 
 /**
  * A class for manipulating Git repositories
@@ -175,7 +175,7 @@ public class GitOrigin implements Origin<GitRevision> {
     GitRepository repo;
     if (partialFetch) {
       String prefixedRepoUrl = String.format("%s:%s%s", configPath, workflowName, repoUrl);
-      repo = gitOptions.cachedBareRepoForUrl(prefixedRepoUrl).enablePartialFetch();
+      repo = gitOptions.cachedBareRepoForUrl(prefixedRepoUrl, repoUrl).enablePartialFetch();
     } else {
       repo = gitOptions.cachedBareRepoForUrl(repoUrl);
     }
@@ -424,7 +424,7 @@ public class GitOrigin implements Origin<GitRevision> {
         String prefixedRepoUrl = String.format("%s:%s%s", configPath, workflowName, repoUrl);
         repo =
             gitOptions
-                .cachedBareRepoForUrl(prefixedRepoUrl, gitRepositoryHook)
+                .cachedBareRepoForUrl(prefixedRepoUrl, repoUrl, gitRepositoryHook)
                 .enablePartialFetch();
       } else {
         repo = gitOptions.cachedBareRepoForUrl(repoUrl, gitRepositoryHook);
@@ -633,11 +633,18 @@ public class GitOrigin implements Origin<GitRevision> {
       Change<GitRevision> rev = changes.get(0);
       // Keep the original revision since it might have context information like code review
       // info. The difference with changes method is that here we know exactly what we've
-      // requested (One SHA-1 revision) while in the other we get a result for a range. That
+      // requested (One SHA revision) while in the other we get a result for a range. That
       // means that extensions of GitOrigin need to implement changes if they want to provide
       // additional information.
-      return new Change<>(ref, rev.getAuthor(), rev.getMessage(), rev.getDateTime(),
-          rev.getLabels(), rev.getChangeFiles(), rev.isMerge(), rev.getParents())
+      return new Change<>(
+              ref,
+              rev.getAuthor(),
+              rev.getMessage(),
+              rev.getDateTime(),
+              rev.getLabels(),
+              rev.getChangeFiles(),
+              rev.isMerge(),
+              rev.getParents())
           .withLabels(ref.associatedLabels());
     }
 

@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.copybara.testing.git.GitTestUtil.getGitEnv;
 import static com.google.copybara.util.CommandRunner.DEFAULT_TIMEOUT;
 
+import com.google.common.base.Ascii;
 import com.google.common.collect.ImmutableList;
 import com.google.copybara.Destination;
 import com.google.copybara.WriterContext;
@@ -27,6 +28,7 @@ import com.google.copybara.effect.DestinationEffect;
 import com.google.copybara.effect.DestinationEffect.Type;
 import com.google.copybara.exception.RepoException;
 import com.google.copybara.exception.ValidationException;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
 import com.google.copybara.git.testing.GitTesting;
 import com.google.copybara.testing.DummyRevision;
 import com.google.copybara.testing.OptionsBuilder;
@@ -34,15 +36,18 @@ import com.google.copybara.testing.SkylarkTestExecutor;
 import com.google.copybara.testing.TransformResults;
 import com.google.copybara.util.Glob;
 import com.google.copybara.util.console.testing.TestingConsole;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public final class SubmodulesInDestinationTest {
+
+  @TestParameter private GitHashAlgorithm repoFormat;
 
   private String url;
   private String fetch;
@@ -64,7 +69,11 @@ public final class SubmodulesInDestinationTest {
     repoGitDir = Files.createTempDirectory("SubmodulesInDestinationTest-repoGitDir");
     workdir = Files.createTempDirectory("workdir");
 
-    git("init", "--bare", repoGitDir.toString());
+    git(
+        "init",
+        "--bare",
+        "--object-format=" + Ascii.toLowerCase(repoFormat.name()),
+        repoGitDir.toString());
     console = new TestingConsole();
     options = new OptionsBuilder()
         .setConsole(console)
@@ -76,11 +85,15 @@ public final class SubmodulesInDestinationTest {
     url = "file://" + repoGitDir;
     skylark = new SkylarkTestExecutor(options);
 
-    submodule = GitRepository
-        .newBareRepo(Files.createTempDirectory("gitdir"), getGitEnv(), /*verbose=*/true,
-            DEFAULT_TIMEOUT, /*noVerify=*/ false)
-        .withWorkTree(Files.createTempDirectory("worktree"))
-        .init();
+    submodule =
+        GitRepository.newBareRepo(
+                Files.createTempDirectory("gitdir"),
+                getGitEnv(),
+                /* verbose= */ true,
+                DEFAULT_TIMEOUT,
+                /* noVerify= */ false)
+            .withWorkTree(Files.createTempDirectory("worktree"))
+            .init(repoFormat);
     primaryBranch = submodule.getPrimaryBranch();
     Files.write(submodule.getWorkTree().resolve("foo"), new byte[] {1});
     submodule.add().files("foo").run();
@@ -140,7 +153,8 @@ public final class SubmodulesInDestinationTest {
     assertThat(result.get(0).getErrors()).isEmpty();
     assertThat(result.get(0).getType()).isEqualTo(Type.CREATED);
     assertThat(result.get(0).getDestinationRef().getType()).isEqualTo("commit");
-    assertThat(result.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40}");
+    assertThat(result.get(0).getDestinationRef().getId())
+        .matches("[0-9a-f]{" + repoFormat.getLength() + "}");
   }
 
   @Test
@@ -203,8 +217,9 @@ public final class SubmodulesInDestinationTest {
     assertThat(result.get(0).getErrors()).isEmpty();
     assertThat(result.get(0).getType()).isEqualTo(Type.CREATED);
     assertThat(result.get(0).getDestinationRef().getType()).isEqualTo("commit");
-    assertThat(result.get(0).getDestinationRef().getId()).matches("[0-9a-f]{40}");
-    
+    assertThat(result.get(0).getDestinationRef().getId())
+        .matches("[0-9a-f]{" + repoFormat.getLength() + "}");
+
     GitTesting.assertThatCheckout(repo(), primaryBranch)
         .containsFiles("foo/c", "foo/b")
         .containsNoFiles("foo/a");

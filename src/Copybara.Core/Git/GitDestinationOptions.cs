@@ -147,7 +147,8 @@ public sealed class GitDestinationOptions : IOption
                         _gitOptions.GetGitEnvironment(_generalOptions.GetEnvironment()),
                         _generalOptions.RepoTimeout,
                         _gitOptions.GitNoVerify,
-                        _gitOptions.GetPushOptionsValidator()));
+                        _gitOptions.GetPushOptionsValidator()),
+                    url);
             }
             throw new RepoException(path + " is not empty and is not a git repository");
         }

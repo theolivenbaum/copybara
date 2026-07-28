@@ -98,8 +98,18 @@ public class GitHubPreSubmitApprovalsProvider : IApprovalsProvider
             ExtractLabelValues(changes, labelFinder, GitHubPrOrigin.GithubPrHeadSha).Single();
         string prAuthor =
             ExtractLabelValues(changes, labelFinder, GitHubPrOrigin.GithubPrUser).Single();
-        string baselineSha =
-            ExtractLabelValues(changes, labelFinder, GitHubPrOrigin.GithubBaseBranchSha1).Single();
+        ImmutableArray<string> baselineShaValues;
+        try
+        {
+            baselineShaValues =
+                ExtractLabelValues(changes, labelFinder, GitHubPrOrigin.GithubBaseBranchSha);
+        }
+        catch (RepoException)
+        {
+            baselineShaValues =
+                ExtractLabelValues(changes, labelFinder, GitHubPrOrigin.GithubBaseBranchSha1);
+        }
+        string baselineSha = baselineShaValues.Single();
 
         // A bit counterintuitive, but the list is [latest_change...earliest_change]. This finds the
         // partition point where, inclusively at the baseline index and to the right, is a postsubmit

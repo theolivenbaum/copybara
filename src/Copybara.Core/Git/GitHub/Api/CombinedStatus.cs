@@ -53,7 +53,7 @@ public class CombinedStatus : IStarlarkValue
         StructField = true)]
     public string GetStateForSkylark() => State.ToString().ToLowerInvariant();
 
-    [StarlarkMethod("sha", Doc = "The SHA-1 of the commit", StructField = true)]
+    [StarlarkMethod("sha", Doc = "The SHA of the commit", StructField = true)]
     public string? GetSha() => Sha;
 
     [StarlarkMethod("total_count", Doc = "Total number of statuses", StructField = true)]

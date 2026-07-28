@@ -33,6 +33,17 @@ public class GitHubApp : IStarlarkValue
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
+    public GitHubApp()
+    {
+    }
+
+    public GitHubApp(int id, string? slug, string? name)
+    {
+        Id = id;
+        Slug = slug;
+        Name = name;
+    }
+
     [StarlarkMethod("id", Doc = "The GitHub App's Id", StructField = true)]
     public int GetId() => Id;
 
@@ -43,4 +54,9 @@ public class GitHubApp : IStarlarkValue
     public string? GetName() => Name;
 
     public override string ToString() => $"GitHubApp{{id={Id}, slug={Slug}, name={Name}}}";
+
+    public override bool Equals(object? o) =>
+        o is GitHubApp other && Id == other.Id && Slug == other.Slug && Name == other.Name;
+
+    public override int GetHashCode() => HashCode.Combine(Id, Slug, Name);
 }

@@ -22,15 +22,20 @@ import static com.google.copybara.util.CommandRunner.DEFAULT_TIMEOUT;
 import static org.junit.Assert.assertThrows;
 
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class GitRevisionTest {
+
+  @TestParameter private GitHashAlgorithm repoFormat;
 
   private GitRepository repository;
   private Path workdir;
@@ -44,20 +49,32 @@ public class GitRevisionTest {
         GitRepository.newBareRepo(
                 gitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false)
             .withWorkTree(workdir);
-    repository.init();
+    repository.init(repoFormat);
   }
 
   @Test
-  public void gitRevisionLabels_sha1() throws Exception {
+  public void gitRevisionLabels_genericLabels() throws Exception {
     Files.write(workdir.resolve("foo.txt"), new byte[] {});
     repository.add().files("foo.txt").run();
     repository.simpleCommand("commit", "foo.txt", "-m", "message");
     GitRevision revision = repository.getHeadRef();
     String hash = revision.getHash();
-    assertThat(revision.associatedLabels()).containsEntry("GIT_SHA1", hash);
-    assertThat(revision.associatedLabels()).containsEntry("GIT_SHORT_SHA1", hash.substring(0, 7));
     assertThat(revision.associatedLabels()).containsEntry("GIT_HASH", hash);
     assertThat(revision.associatedLabels()).containsEntry("GIT_SHORT_HASH", hash.substring(0, 7));
+  }
+
+  @Test
+  public void gitRevisionLabels_sha1Labels() throws Exception {
+    Assume.assumeTrue(repoFormat == GitHashAlgorithm.SHA1);
+
+    Files.write(workdir.resolve("foo.txt"), new byte[] {});
+    repository.add().files("foo.txt").run();
+    repository.simpleCommand("commit", "foo.txt", "-m", "message");
+    GitRevision revision = repository.getHeadRef();
+    String hash = revision.getHash();
+
+    assertThat(revision.associatedLabels()).containsEntry("GIT_SHA1", hash);
+    assertThat(revision.associatedLabels()).containsEntry("GIT_SHORT_SHA1", hash.substring(0, 7));
     assertThat(revision.associatedLabel("GIT_SHA1")).containsExactly(hash);
     assertThat(revision.associatedLabel("GIT_SHORT_SHA1")).containsExactly(hash.substring(0, 7));
   }

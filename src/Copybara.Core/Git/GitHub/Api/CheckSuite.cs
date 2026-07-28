@@ -64,7 +64,7 @@ public class CheckSuite : IStarlarkValue
         AllowReturnNones = true)]
     public string? GetConclusion() => Conclusion?.ToString().ToLowerInvariant();
 
-    [StarlarkMethod("sha", Doc = "The SHA-1 the check run is based on", StructField = true)]
+    [StarlarkMethod("sha", Doc = "The SHA the check run is based on", StructField = true)]
     public string? GetSha() => Sha;
 
     [StarlarkMethod("app", Doc = "The detail of a GitHub App, such as id, slug, and name", StructField = true)]

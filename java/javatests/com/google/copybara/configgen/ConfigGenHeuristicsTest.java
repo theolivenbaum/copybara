@@ -21,6 +21,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.copybara.configgen.ConfigGenHeuristics.GeneratorCopy;
 import com.google.copybara.configgen.ConfigGenHeuristics.GeneratorMove;
 import com.google.copybara.testing.OptionsBuilder;
 import com.google.copybara.util.Glob;
@@ -179,12 +180,72 @@ public class ConfigGenHeuristicsTest {
     writeFile(destination, "x/y/include3/fileC", "bar3");
 
     ConfigGenHeuristics.Result result = createHeuristics().run();
-    assertThat(result.getTransformations().getMoves()).containsExactly(
-        new GeneratorMove("a/b/include", "x/y/z"),
-        new GeneratorMove("a/b/include2/test", "x/y/include2/test"),
-        new GeneratorMove("a/b/include2/fileC", "x/y/include3/fileC"),
-        new GeneratorMove("c/X", "c/Y")
-    );
+    assertThat(result.getTransformations().asList())
+        .containsExactly(
+            new GeneratorMove("a/b/include", "x/y/z"),
+            new GeneratorMove("a/b/include2/test", "x/y/include2/test"),
+            new GeneratorMove("a/b/include2/fileC", "x/y/include3/fileC"),
+            new GeneratorMove("c/X", "c/Y"));
+  }
+
+  @Test
+  public void testCopiesGeneratedForMultipleDestinationsWithIdentityMatch() throws IOException {
+    writeFile(origin, "a/b/c/fileA", "foo\nbar\na");
+    writeFile(destination, "a/b/c/fileA", "foo\nbar\na"); // Identity (exact same path/filename)
+    writeFile(destination, "x/y/z/fileB", "foo\nbar\na"); // Copy
+
+    ConfigGenHeuristics.Result result = createHeuristics().run();
+
+    assertThat(result.getTransformations().asList())
+        .containsExactly(new GeneratorCopy("a/b/c/fileA", "x/y/z/fileB"));
+    assertThat(result.getDestinationExcludePaths().getPaths())
+        .doesNotContain(Path.of("a/b/c/fileA"));
+    assertThat(result.getDestinationExcludePaths().getPaths())
+        .doesNotContain(Path.of("x/y/z/fileB"));
+  }
+
+  @Test
+  public void testMultipleDestinationsNoIdentityMatch() throws IOException {
+    String largeContent = "aaa\n".repeat(20);
+    writeFile(origin, "fileA", largeContent);
+    writeFile(destination, "fileB", largeContent + "CHANGED"); // Fuzzy match
+    writeFile(destination, "fileC", largeContent); // Exact match
+
+    ConfigGenHeuristics.Result result = createHeuristics().run();
+
+    assertThat(result.getTransformations().asList())
+        .containsExactly(new GeneratorMove("fileA", "fileC"), new GeneratorCopy("fileA", "fileB"));
+    assertThat(result.getDestinationExcludePaths().getPaths()).doesNotContain(Path.of("fileB"));
+  }
+
+  @Test
+  public void testFilenameMatchPreferred() throws IOException {
+    writeFile(origin, "a/b/c/fileA", "foo\nbar\na");
+    // Different path, same filename. Should be preferred as a move.
+    writeFile(destination, "x/y/z/fileA", "foo\nbar\na");
+    // Different path, different filename. Should be a copy.
+    writeFile(destination, "u/v/w/fileB", "foo\nbar\na");
+
+    ConfigGenHeuristics.Result result = createHeuristics().run();
+
+    assertThat(result.getTransformations().asList())
+        .containsExactly(
+            new GeneratorMove("a/b/c", "x/y/z"), new GeneratorCopy("a/b/c/fileA", "u/v/w/fileB"));
+  }
+
+  @Test
+  public void testCopyIgnoredBelowThreshold() throws IOException {
+    String largeContent = "aaa\n".repeat(20);
+    String veryDifferent = "bbb\n".repeat(20);
+    writeFile(origin, "fileA", largeContent);
+    writeFile(destination, "fileC", largeContent); // Exact match -> Primary
+    writeFile(destination, "fileB", veryDifferent); // Below threshold -> Not a copy
+
+    ConfigGenHeuristics.Result result = createHeuristics().run();
+
+    assertThat(result.getTransformations().asList())
+        .containsExactly(new GeneratorMove("fileA", "fileC"));
+    assertThat(result.getDestinationExcludePaths().getPaths()).contains(Path.of("fileB"));
   }
 
   @Test
@@ -200,7 +261,7 @@ public class ConfigGenHeuristicsTest {
 
     ConfigGenHeuristics.Result result = createHeuristics().run();
 
-    assertThat(result.getTransformations().getMoves())
+    assertThat(result.getTransformations().asList())
         .containsExactly(
             new GeneratorMove("res/LICENSE/fileD", "LICENSE"), new GeneratorMove("", "src/main"))
         .inOrder();
@@ -244,8 +305,7 @@ public class ConfigGenHeuristicsTest {
     writeFile(destination, "LICENSE", "foo3");
 
     ConfigGenHeuristics.Result result = createHeuristics().run();
-    assertThat(result.getTransformations().getMoves())
-        .containsExactly(new GeneratorMove("a/b", ""));
+    assertThat(result.getTransformations().asList()).containsExactly(new GeneratorMove("a/b", ""));
   }
 
   @Test
@@ -258,6 +318,48 @@ public class ConfigGenHeuristicsTest {
 
     assertThat(result.getDestinationExcludePaths().getPaths())
         .containsExactly(Path.of("include/fileB"));
+  }
+
+  @Test
+  public void testDestinationExcludePaths_minimizedToFolder() throws IOException {
+    writeFile(origin, "a/b/include/fileA", "foo1");
+    writeFile(destination, "include/fileA", "foo1");
+    writeFile(destination, "exclude_dir/fileB", "foo2");
+    writeFile(destination, "exclude_dir/fileC", "foo3");
+
+    ConfigGenHeuristics.Result result = createHeuristics().run();
+
+    assertThat(result.getDestinationExcludePaths().getPaths())
+        .containsExactly(Path.of("exclude_dir/**"));
+  }
+
+  @Test
+  public void testDestinationExcludePaths_minimizedToFolderNested() throws IOException {
+    writeFile(origin, "a/b/include/fileA", "foo1");
+    writeFile(destination, "include/fileA", "foo1");
+    writeFile(destination, "exclude_dir/foo/bar/adk/fileB", "foo2");
+    writeFile(destination, "exclude_dir/foo/bar/adk/fileC", "foo3");
+    writeFile(destination, "exclude_dir/foo/bar/adk/fileD", "foo3");
+    writeFile(destination, "exclude_dir/foo/bar/adk/fileE", "foo3");
+
+    ConfigGenHeuristics.Result result = createHeuristics().run();
+
+    assertThat(result.getDestinationExcludePaths().getPaths())
+        .containsExactly(Path.of("exclude_dir/**"));
+  }
+
+  @Test
+  public void testDestinationExcludePaths_notMinimizedIfContainsManagedFile() throws IOException {
+    writeFile(origin, "a/b/include/fileA", "foo1");
+    writeFile(origin, "a/b/mixed/fileM", "foo2");
+    writeFile(destination, "include/fileA", "foo1");
+    writeFile(destination, "mixed/fileM", "foo2");
+    writeFile(destination, "mixed/fileB", "foo3");
+
+    ConfigGenHeuristics.Result result = createHeuristics().run();
+
+    assertThat(result.getDestinationExcludePaths().getPaths())
+        .containsExactly(Path.of("mixed/fileB"));
   }
 
   @Test

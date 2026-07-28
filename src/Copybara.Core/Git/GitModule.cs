@@ -27,6 +27,7 @@ using Copybara.Git.GerritApi;
 using Copybara.Git.GitHub.Api;
 using Copybara.Git.GitLab;
 using Copybara.Git.GitLab.Api.Entities;
+using Copybara.TemplateToken;
 using Copybara.Transform;
 using Copybara.Transform.Patch;
 using Copybara.Version;
@@ -118,7 +119,7 @@ public class GitModule : ILabelsAwareModule, IStarlarkValue
         bool failIfCommonBaselineNotFound =
             options
                 .Get<GeneralOptions>()
-                .IsTemporaryFeature("GIT_INTEGRATE_FAIL_IF_COMMON_BASELINE_NOT_FOUND", false);
+                .IsTemporaryFeature("GIT_INTEGRATE_FAIL_IF_COMMON_BASELINE_NOT_FOUND", true);
         bool ignoreErrors = !failIfCommonBaselineNotFound;
         _defaultGitIntegrate =
             StarlarkList.ImmutableCopyOf(
@@ -335,8 +336,23 @@ public class GitModule : ILabelsAwareModule, IStarlarkValue
         string strategy,
         [Param(Name = "ignore_errors", Named = true, DefaultValue = "True",
             Doc = "If we should ignore integrate errors and continue the migration.")]
-        bool ignoreErrors) =>
-        new(label, GitIntegrateChanges.Strategy.ValueOf(strategy), ignoreErrors);
+        bool ignoreErrors,
+        [Param(Name = "allow_unrelated_history", Named = true, DefaultValue = "False",
+            Doc = "If true allow integrates of unrelated histories.")]
+        bool allowUnrelatedHistory,
+        [Param(Name = "merge_commit_message", Named = true, DefaultValue = "\"${MERGE_MSG}\"",
+            Doc =
+                "The template for the merge commit message. Use ${MERGE_MSG} for default message"
+                + " and ${SUMMARY_FROM_TRANSFORM} for summary of the transform. All other labels"
+                + " from the TransformResult are available, but destination labels might not. It"
+                + " will use the first label value if multiple are defined. See"
+                + " metadata.replace_message for semantics")]
+        string mergeCommitMessage) =>
+        new(label,
+            GitIntegrateChanges.Strategy.ValueOf(strategy),
+            ignoreErrors,
+            allowUnrelatedHistory,
+            new LabelTemplate(mergeCommitMessage));
 
     [StarlarkMethod("mirror",
         Doc = "Mirror git references between repositories",

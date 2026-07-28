@@ -78,7 +78,7 @@ public class CheckRun : IStarlarkValue
         AllowReturnNones = true)]
     public string? GetConclusion() => Conclusion?.ToString().ToLowerInvariant();
 
-    [StarlarkMethod("sha", Doc = "The SHA-1 the check run is based on", StructField = true)]
+    [StarlarkMethod("sha", Doc = "The SHA the check run is based on", StructField = true)]
     public string? GetSha() => Sha;
 
     [StarlarkMethod("name", Doc = "The name of the check", StructField = true)]
@@ -106,16 +106,43 @@ public class CheckRun : IStarlarkValue
         $"CheckRun{{details_url={DetailUrl}, status={Status}, conclusion={Conclusion}, sha={Sha},"
         + $" name={Name}, app={App}, output={Output}, pulls={PullRequests}}}";
 
+    public override bool Equals(object? o) =>
+        o is CheckRun other
+        && DetailUrl == other.DetailUrl
+        && Status == other.Status
+        && Conclusion == other.Conclusion
+        && Sha == other.Sha
+        && Name == other.Name
+        && Equals(App, other.App)
+        && Equals(Output, other.Output)
+        && (PullRequests == null
+            ? other.PullRequests == null
+            : other.PullRequests != null && PullRequests.SequenceEqual(other.PullRequests));
+
+    public override int GetHashCode() =>
+        HashCode.Combine(DetailUrl, Status, Conclusion, Sha, Name, App, Output, PullRequests?.Count);
+
     /// <summary>PR submessage in check_run.</summary>
     public class CheckRunPullRequest : IStarlarkValue
     {
         [JsonPropertyName("number")]
         public int Number { get; set; }
 
+        public CheckRunPullRequest()
+        {
+        }
+
+        public CheckRunPullRequest(int number) => Number = number;
+
         [StarlarkMethod("number", Doc = "Number of a PR liked to the check_run", StructField = true)]
         public int GetNumber() => Number;
 
         public override string ToString() => $"PullRequest{{number={Number}}}";
+
+        public override bool Equals(object? o) =>
+            o is CheckRunPullRequest other && Number == other.Number;
+
+        public override int GetHashCode() => Number.GetHashCode();
     }
 }
 

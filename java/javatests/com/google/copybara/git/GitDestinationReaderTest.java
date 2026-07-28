@@ -37,13 +37,16 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.stream.Collectors;
 import org.junit.Before;
+import com.google.copybara.git.GitRevision.GitHashAlgorithm;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class GitDestinationReaderTest {
 
+  @TestParameter private GitHashAlgorithm repoFormat;
 
   private SkylarkTestExecutor skylark;
 
@@ -67,8 +70,15 @@ public class GitDestinationReaderTest {
     options.setHomeDir(Files.createTempDirectory("home").toString());
     origin = new DummyOrigin();
     options.testingOptions.origin = origin;
-    repo = GitRepository.newBareRepo(destinationPath, getGitEnv(),
-        /*verbose=*/true, DEFAULT_TIMEOUT, /*noVerify=*/ false).withWorkTree(gitDir).init();
+    repo =
+        GitRepository.newBareRepo(
+                destinationPath,
+                getGitEnv(),
+                /* verbose= */ true,
+                DEFAULT_TIMEOUT,
+                /* noVerify= */ false)
+            .withWorkTree(gitDir)
+            .init(repoFormat);
     primaryBranch = repo.getPrimaryBranch();
     options.gitDestination.committerEmail = "commiter@email";
     options.gitDestination.committerName = "Bara Kopi";

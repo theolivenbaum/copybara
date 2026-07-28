@@ -26,8 +26,8 @@ namespace Copybara.ConfigGen;
 
 /// <summary>
 /// Given a set of files from the origin and a set of files from the destination, it generates
-/// origin_globs, destination_globs and core.moves to minimize the number of transformations for
-/// converting code from origin to destination.
+/// origin_globs, destination_globs, core.moves, and core.copies to minimize the number of
+/// transformations for converting code from origin to destination.
 ///
 /// <para>Note that the generation is not perfect and should be reviewed by a human.</para>
 /// </summary>
@@ -117,8 +117,8 @@ public class ConfigGenHeuristics
     public readonly record struct PathAndScore(string Path, int Score);
 
     /// <summary>
-    /// Run the config generation to find a good origin_files, destination_files and core.moves needed
-    /// to convert the code from origin to destination.
+    /// Run the config generation to find a good origin_files, destination_files, core.moves, and
+    /// core.copies needed to convert the code from origin to destination.
     /// </summary>
     /// <returns>an object containing all the heuristic results.</returns>
     public Result Run()
@@ -128,26 +128,59 @@ public class ConfigGenHeuristics
         var destinationToOriginMapping =
             GetDestinationToOriginMapping(gitFiles, g3Files, _generalOptions.GetConsole());
 
-        // Map of Origin file paths to destination file paths.
-        // If multiple destination files map to the same origin file, we preserve the mapping with
-        // the highest score.
+        // Map of Origin file paths to primary destination file paths.
+        // If multiple destination files map to the same origin file, we prefer the match with the
+        // same filename or the mapping with the highest score as the primary destination (move).
+        // Other high-scoring destinations exceeding the similarity threshold are treated as copies.
         var similarFiles = new Dictionary<string, string>();
+        var copiesBuilder = ImmutableArray.CreateBuilder<IGeneratorTransformation>();
+        var mappedDestinations = new HashSet<string>();
+
         foreach (var group in destinationToOriginMapping.GroupBy(e => e.Value.Path))
         {
-            var best = group.Aggregate((a, b) => a.Value.Score >= b.Value.Score ? a : b);
-            similarFiles[best.Key] = group.Key;
+            string originPath = group.Key;
+            var dests = group
+                .Select(e => new PathAndScore(e.Key, e.Value.Score))
+                .ToList();
+
+            // Prefer a destination with the exact same filename.
+            string originFileName = PathOps.GetFileName(originPath);
+            int filenameMatch =
+                dests.FindIndex(e => PathOps.GetFileName(e.Path) == originFileName);
+
+            string primaryDest =
+                filenameMatch >= 0
+                    ? dests[filenameMatch].Path
+                    : dests.Aggregate((a, b) => b.Score > a.Score ? b : a).Path;
+
+            similarFiles[originPath] = primaryDest;
+            mappedDestinations.Add(primaryDest);
+
+            // Treat remaining destinations as copies.
+            foreach (var e in dests)
+            {
+                if (e.Path != primaryDest)
+                {
+                    copiesBuilder.Add(new GeneratorCopy(originPath, e.Path));
+                    mappedDestinations.Add(e.Path);
+                }
+            }
         }
 
         var originGlob = GetOriginGlob(gitFiles, similarFiles, g3Files);
         var moves = GenerateMoves(similarFiles);
+        var allTransformations = ImmutableArray.CreateBuilder<IGeneratorTransformation>();
+        allTransformations.AddRange(moves);
+        allTransformations.AddRange(copiesBuilder);
+
         var destinationExcludePaths =
             new DestinationExcludePaths(
-                GetDestinationExcludePaths(g3Files, similarFiles, _destinationOnlyPaths));
+                GetDestinationExcludePaths(g3Files, mappedDestinations, _destinationOnlyPaths));
         string? tagSeparator = GetVersionStringSeparator(_versions);
 
         return new Result(
             originGlob.GlobValue,
-            new GeneratorTransformations(moves),
+            new GeneratorTransformations(allTransformations.ToImmutable()),
             destinationExcludePaths,
             tagSeparator != null,
             tagSeparator);
@@ -242,18 +275,31 @@ public class ConfigGenHeuristics
     }
 
     /// <summary>
-    /// Returns the set of files that are in the destination but not in the origin. This is the union
-    /// of the known destinationOnlyPaths and the files that are in g3Files but not in similarFiles.
+    /// Returns minimized paths/globs covering destination-only files. This combines the known
+    /// destinationOnlyPaths with optimized patterns for the g3Files that no transformation maps to.
     /// </summary>
     private ImmutableHashSet<string> GetDestinationExcludePaths(
         ImmutableHashSet<string> g3Files,
-        Dictionary<string, string> similarFiles,
+        IReadOnlySet<string> mappedDestinations,
         ImmutableHashSet<string> destinationOnlyPaths)
     {
-        var similarValues = similarFiles.Values.ToHashSet();
-        return destinationOnlyPaths
-            .Union(g3Files.Where(p => !similarValues.Contains(p)))
-            .ToImmutableHashSet();
+        var destinationOnly =
+            g3Files.Where(p => !mappedDestinations.Contains(p)).ToImmutableHashSet();
+
+        var result = ImmutableHashSet.CreateBuilder<string>();
+        result.UnionWith(destinationOnlyPaths);
+
+        if (destinationOnly.Count != 0)
+        {
+            IncludesGlob minGlob =
+                new DestinationExcludesGlob(
+                        ImmutableHashSet.Create("**"), ImmutableHashSet<string>.Empty)
+                    .MinimizeScore(
+                        destinationOnly.ToList(), mappedDestinations.ToImmutableHashSet(), 0);
+            result.UnionWith(minGlob.Includes);
+        }
+
+        return result.ToImmutable();
     }
 
     /// <summary>
@@ -382,7 +428,46 @@ public class ConfigGenHeuristics
         return new IncludesGlob(originGlob.Includes, newExcludes.ToImmutable());
     }
 
-    private sealed class ExcludesGlob : IncludesGlob
+    /// <summary>
+    /// Custom scoring for destination excludes. Rejects patterns if they catch any file we want to
+    /// keep. Disallows the global wildcard ("**").
+    /// </summary>
+    private sealed class DestinationExcludesGlob : ExcludesGlob
+    {
+        internal DestinationExcludesGlob(
+            IReadOnlySet<string> includes, IReadOnlySet<string> excludes)
+            : base(includes, excludes)
+        {
+        }
+
+        protected override int Score()
+        {
+            // If excludes needs excludes, it is not a good excludes.
+            if (Excludes.Count != 0)
+            {
+                return int.MaxValue;
+            }
+            // Never include all files, otherwise importing is pointless.
+            if (Includes.Contains("**"))
+            {
+                return int.MaxValue;
+            }
+
+            int penalty = 0;
+            // Prefer explicit paths over wildcards to optimize the glob.
+            if (Includes.Any(i => i.Contains('*')))
+            {
+                penalty += 1;
+            }
+            return DefaultScore() + penalty;
+        }
+
+        protected override IncludesGlob Create(
+            IReadOnlySet<string> includes, IReadOnlySet<string> excludes) =>
+            new DestinationExcludesGlob(includes, excludes);
+    }
+
+    private class ExcludesGlob : IncludesGlob
     {
         internal ExcludesGlob(IReadOnlySet<string> includes, IReadOnlySet<string> excludes)
             : base(includes, excludes)
@@ -391,7 +476,7 @@ public class ConfigGenHeuristics
 
         protected override int Score() =>
             // If excludes needs excludes, it is not a good excludes.
-            Excludes.Count == 0 ? base.Score() : int.MaxValue;
+            Excludes.Count == 0 ? DefaultScore() : int.MaxValue;
 
         protected override IncludesGlob WithExcludes(
             IReadOnlyCollection<string> toBeIncluded, IReadOnlySet<string> toBeExcluded)
@@ -423,8 +508,11 @@ public class ConfigGenHeuristics
                 new SortedSet<string>(includes, StringComparer.Ordinal),
                 new SortedSet<string>(excludes, StringComparer.Ordinal));
 
-        protected virtual int Score() =>
+        /// <summary>The base scoring formula, i.e. <c>IncludesGlob</c>'s own score.</summary>
+        protected int DefaultScore() =>
             Math.Max(Includes.Count, 1) * Math.Max(Excludes.Count, 1);
+
+        protected virtual int Score() => DefaultScore();
 
         public int CompareTo(IncludesGlob? o) =>
             o == null ? 1 : Score().CompareTo(o.Score());
@@ -628,13 +716,23 @@ public class ConfigGenHeuristics
         return result.ToImmutable();
     }
 
-    /// <summary>Represents a core.move() to be included in the generation.</summary>
-    public sealed class GeneratorMove : IEquatable<GeneratorMove>
+    /// <summary>Base interface for transformations generated by the heuristics.</summary>
+    public interface IGeneratorTransformation
+    {
+        /// <summary>Returns the original path in the origin repository before the transformation.</summary>
+        string GetBefore();
+
+        /// <summary>Returns the target path in the destination repository after the transformation.</summary>
+        string GetAfter();
+    }
+
+    /// <summary>Base class holding the common fields and logic of generator transformations.</summary>
+    public abstract class AbstractGeneratorTransformation : IGeneratorTransformation
     {
         private readonly string _before;
         private readonly string _after;
 
-        public GeneratorMove(string before, string after)
+        protected AbstractGeneratorTransformation(string before, string after)
         {
             _before = before;
             _after = after;
@@ -644,27 +742,48 @@ public class ConfigGenHeuristics
 
         public string GetAfter() => _after;
 
-        public bool Equals(GeneratorMove? that) =>
-            that is not null && _before == that._before && _after == that._after;
-
-        public override bool Equals(object? o) => Equals(o as GeneratorMove);
+        public override bool Equals(object? o) =>
+            o != null
+            && GetType() == o.GetType()
+            && _before == ((AbstractGeneratorTransformation)o)._before
+            && _after == ((AbstractGeneratorTransformation)o)._after;
 
         public override int GetHashCode() => HashCode.Combine(_before, _after);
+    }
 
-        public override string ToString() => $"core.move(\"{_before}\", \"{_after}\")";
+    /// <summary>Represents a core.move() to be included in the generation.</summary>
+    public sealed class GeneratorMove : AbstractGeneratorTransformation
+    {
+        public GeneratorMove(string before, string after)
+            : base(before, after)
+        {
+        }
+
+        public override string ToString() => $"core.move(\"{GetBefore()}\", \"{GetAfter()}\")";
+    }
+
+    /// <summary>Represents a core.copy() to be included in the generation.</summary>
+    public sealed class GeneratorCopy : AbstractGeneratorTransformation
+    {
+        public GeneratorCopy(string before, string after)
+            : base(before, after)
+        {
+        }
+
+        public override string ToString() => $"core.copy(\"{GetBefore()}\", \"{GetAfter()}\")";
     }
 
     /// <summary>Represents a collection of transformations to be included in the generation.</summary>
     public sealed class GeneratorTransformations
     {
-        private readonly ImmutableArray<GeneratorMove> _moves;
+        private readonly ImmutableArray<IGeneratorTransformation> _transformations;
 
-        public GeneratorTransformations(ImmutableArray<GeneratorMove> moves)
+        public GeneratorTransformations(ImmutableArray<IGeneratorTransformation> transformations)
         {
-            _moves = moves;
+            _transformations = transformations;
         }
 
-        public ImmutableArray<GeneratorMove> GetMoves() => _moves;
+        public ImmutableArray<IGeneratorTransformation> AsList() => _transformations;
     }
 
     /// <summary>

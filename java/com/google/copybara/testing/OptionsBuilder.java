@@ -17,6 +17,11 @@
 package com.google.copybara.testing;
 
 import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.LowLevelHttpRequest;
+import com.google.api.client.http.LowLevelHttpResponse;
+import com.google.api.client.testing.http.MockHttpTransport;
+import com.google.api.client.testing.http.MockLowLevelHttpRequest;
+import com.google.api.client.testing.http.MockLowLevelHttpResponse;
 import com.google.common.base.StandardSystemProperty;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -50,10 +55,10 @@ import com.google.copybara.transform.debug.DebugOptions;
 import com.google.copybara.transform.patch.PatchingOptions;
 import com.google.copybara.util.console.Console;
 import com.google.copybara.util.console.testing.TestingConsole;
+import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.util.HashMap;
 import java.util.Map;
-import org.mockito.Mockito;
 
 /**
  * Allows building complete and sane {@link Options} instances succinctly.
@@ -89,12 +94,26 @@ public class OptionsBuilder {
 
   public String buildozerBin = null;
 
-  public GitHubOptions github = new GitHubOptions(general, git) {
-    @Override
-    protected HttpTransport newHttpTransport() {
-      return Mockito.mock(HttpTransport.class);
-    }
-  };
+  public GitHubOptions github =
+      new GitHubOptions(general, git) {
+        @Override
+        protected HttpTransport newHttpTransport() {
+          return new MockHttpTransport() {
+            @Override
+            public LowLevelHttpRequest buildRequest(String method, String url) throws IOException {
+              return new MockLowLevelHttpRequest() {
+                @Override
+                public LowLevelHttpResponse execute() throws IOException {
+                  MockLowLevelHttpResponse response = new MockLowLevelHttpResponse();
+                  response.setStatusCode(200);
+                  response.setContent("{\"id\":123456789,\"name\":\"copybara\"}");
+                  return response;
+                }
+              };
+            }
+          };
+        }
+      };
   public GitHubDestinationOptions githubDestination = new GitHubDestinationOptions();
   public GitMirrorOptions gitMirrorOptions = new GitMirrorOptions();
   public GerritOptions gerrit = new GerritOptions(general, git);

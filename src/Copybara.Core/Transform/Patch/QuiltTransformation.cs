@@ -256,6 +256,7 @@ public sealed class QuiltTransformation : ITransformation
         IReadOnlyDictionary<string, string> env,
         bool verbose)
     {
+        bool refresh = _options.QuiltRefreshPatches;
         foreach (string patch in patches)
         {
             string targetPatch =
@@ -267,7 +268,10 @@ public sealed class QuiltTransformation : ITransformation
             }
             RunQuiltCommand(quiltRunDir, env, verbose, "import", patch);
             RunQuiltCommand(quiltRunDir, env, verbose, "push");
-            RunQuiltCommand(quiltRunDir, env, verbose, "refresh");
+            if (refresh)
+            {
+                RunQuiltCommand(quiltRunDir, env, verbose, "refresh");
+            }
         }
     }
 

@@ -137,7 +137,7 @@ public class GitOrigin : IOrigin<GitRevision>
         if (_partialFetch)
         {
             string prefixedRepoUrl = $"{_configPath}:{_workflowName}{RepoUrl}";
-            repo = _gitOptions.CachedBareRepoForUrl(prefixedRepoUrl).EnablePartialFetch();
+            repo = _gitOptions.CachedBareRepoForUrl(prefixedRepoUrl, RepoUrl).EnablePartialFetch();
         }
         else
         {
@@ -389,7 +389,7 @@ public class GitOrigin : IOrigin<GitRevision>
             {
                 string prefixedRepoUrl = $"{_configPath}:{_workflowName}{_repoUrl}";
                 repo = _gitOptions
-                    .CachedBareRepoForUrl(prefixedRepoUrl, _gitRepositoryHook)
+                    .CachedBareRepoForUrl(prefixedRepoUrl, _repoUrl, _gitRepositoryHook)
                     .EnablePartialFetch();
             }
             else

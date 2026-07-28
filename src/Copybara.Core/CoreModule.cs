@@ -316,6 +316,11 @@ public class CoreModule : ILabelsAwareModule, IStarlarkValue
         }
 
         string? consistencyFilePath = SkylarkUtil.ConvertFromNoneable<string?>(consistencyFilePathObj, null);
+        // Resolve the consistency file config first: some Starlark configs supply the consistency
+        // file through `consistency_file` rather than `consistency_file_path`, and deciding
+        // use_consistency_file from consistencyFilePath alone gets those wrong.
+        var consistencyConfig = ResolveConsistencyFileConfig(consistencyFileObj, consistencyFilePath);
+
         MergeImportConfiguration? mergeImport;
         if (mergeImportObj is bool objectValue)
         {
@@ -324,7 +329,7 @@ public class CoreModule : ILabelsAwareModule, IStarlarkValue
                     ? MergeImportConfiguration.Create(
                         "",
                         Glob.AllFiles,
-                        !string.IsNullOrEmpty(consistencyFilePath),
+                        consistencyConfig != null,
                         MergeImportConfiguration.MergeStrategy.DIFF3)
                     : null;
         }
@@ -332,8 +337,6 @@ public class CoreModule : ILabelsAwareModule, IStarlarkValue
         {
             mergeImport = SkylarkUtil.ConvertFromNoneable<MergeImportConfiguration?>(mergeImportObj, null);
         }
-
-        var consistencyConfig = ResolveConsistencyFileConfig(consistencyFileObj, consistencyFilePath);
 
         if (mergeImport != null && mergeImport.UseConsistencyFile())
         {

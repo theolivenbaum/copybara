@@ -31,7 +31,6 @@ import static com.google.copybara.version.LatestVersionSelector.VersionElementTy
 import static com.google.copybara.version.LatestVersionSelector.VersionElementType.NUMERIC;
 
 import com.google.common.base.Preconditions;
-import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -654,6 +653,9 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
     }
 
     @Nullable String consistencyFilePath = convertFromNoneable(consistencyFilePathObj, null);
+    ConsistencyFileConfiguration consistencyConfig =
+        resolveConsistencyFileConfig(consistencyFileObj, consistencyFilePath);
+
     MergeImportConfiguration mergeImport;
     if (mergeImportObj instanceof Boolean objectValue) {
       mergeImport =
@@ -661,15 +663,12 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
               ? MergeImportConfiguration.create(
                   "",
                   Glob.ALL_FILES,
-                  !Strings.isNullOrEmpty(consistencyFilePath),
+                  consistencyConfig != null,
                   MergeImportConfiguration.MergeStrategy.DIFF3)
               : null;
     } else {
       mergeImport = convertFromNoneable(mergeImportObj, null);
     }
-
-    ConsistencyFileConfiguration consistencyConfig =
-        resolveConsistencyFileConfig(consistencyFileObj, consistencyFilePath);
 
     if (mergeImport != null && mergeImport.useConsistencyFile()) {
       check(
