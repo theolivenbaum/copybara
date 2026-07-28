@@ -68,6 +68,13 @@ public class LabelTemplate
         return result;
     }
 
+    public override bool Equals(object? o) =>
+        o is LabelTemplate that && _template == that._template;
+
+    public override int GetHashCode() => _template.GetHashCode();
+
+    public override string ToString() => _template;
+
     /// <summary>Thrown when a label cannot be found in the message.</summary>
     public class LabelNotFoundException : Exception
     {

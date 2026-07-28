@@ -22,6 +22,8 @@ using Copybara.Authoring;
 using Copybara.Common;
 using Copybara.Exceptions;
 using Copybara.Util;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Copybara.Git;
 
@@ -36,6 +38,8 @@ namespace Copybara.Git;
 /// </summary>
 public class GitRepository
 {
+    private static readonly ILogger Logger = NullLogger.Instance;
+
     public static readonly TimeSpan DefaultRepoTimeout = TimeSpan.FromMinutes(15);
 
     // TODO: Make this generic (Using URIish).
@@ -1480,7 +1484,7 @@ public class GitRepository
     }
 
     /// <summary>Initializes the repository.</summary>
-    public GitRepository Init() => Init(null);
+    public GitRepository Init() => Init((GitHashAlgorithm?)null);
 
     /// <summary>Initializes the repository with the specified object format.</summary>
     public GitRepository Init(GitHashAlgorithm? objectFormat)
@@ -1511,6 +1515,75 @@ public class GitRepository
         {
             args.Add("--bare");
             Git(_gitDir, null, args);
+        }
+        return this;
+    }
+
+    /// <summary>
+    /// Initializes the repository, matching the remote object format if <paramref name="fetchUrl"/>
+    /// is provided. If an already-initialized repository uses a different object format than the
+    /// remote, the local git dir is wiped and re-initialized with the remote's format.
+    /// </summary>
+    public GitRepository Init(string? fetchUrl)
+    {
+        try
+        {
+            Directory.CreateDirectory(_gitDir);
+        }
+        catch (IOException e)
+        {
+            throw new RepoException("Failed to create cache dir", e);
+        }
+
+        GitHashAlgorithm? remoteFormat = null;
+        if (fetchUrl != null)
+        {
+            try
+            {
+                remoteFormat = GetRemoteObjectFormat(fetchUrl);
+            }
+            catch (RepoException e)
+            {
+                // Failed to get remote format, keep local format / use default.
+                Logger.LogInformation(
+                    e, "Failed to get remote object format for {FetchUrl}", fetchUrl);
+            }
+        }
+
+        if (IsInitialized())
+        {
+            GitHashAlgorithm localFormat = GitHashAlgorithm.Sha1;
+            try
+            {
+                string stdout = SimpleCommand("config", "extensions.objectFormat")
+                    .GetStdout()
+                    .Trim();
+                if (stdout.Contains("sha256"))
+                {
+                    localFormat = GitHashAlgorithm.Sha256;
+                }
+            }
+            catch (RepoException e)
+            {
+                // Unconfigured, default is sha1.
+                Logger.LogInformation(e, "Failed to get local object format, using SHA1");
+            }
+            if (remoteFormat != null && localFormat != remoteFormat.Value)
+            {
+                try
+                {
+                    FileUtil.DeleteRecursively(_gitDir);
+                }
+                catch (IOException e)
+                {
+                    throw new RepoException("Failed to delete stale cache dir", e);
+                }
+            }
+        }
+
+        if (!IsInitialized())
+        {
+            Init(remoteFormat);
         }
         return this;
     }

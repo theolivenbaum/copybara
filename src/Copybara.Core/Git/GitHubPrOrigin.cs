@@ -45,6 +45,7 @@ public class GitHubPrOrigin : IOrigin<GitRevision>
     public const string GithubPrNumberLabel = "GITHUB_PR_NUMBER";
     public const string GithubBaseBranch = "GITHUB_BASE_BRANCH";
     public const string GithubBaseBranchSha1 = "GITHUB_BASE_BRANCH_SHA1";
+    public const string GithubBaseBranchSha = "GITHUB_BASE_BRANCH_SHA";
     public const string GithubPrUseMerge = "GITHUB_PR_USE_MERGE";
     public const string GithubPrTitle = "GITHUB_PR_TITLE";
     public const string GithubPrUrl = "GITHUB_PR_URL";
@@ -279,7 +280,16 @@ public class GitHubPrOrigin : IOrigin<GitRevision>
         CheckPrBranch(project, prData);
         CheckRequiredLabels(api, project, prData);
         CheckRequiredStatusContextNames(api, project, prData);
-        CheckRequiredCheckRuns(api, project, prData);
+        if (_generalOptions.IsTemporaryFeature("use_graphql_api_for_check_runs", false))
+        {
+            GitHubGraphQLApi graphqlApi = _gitHubOptions.NewGitHubGraphQLApi(
+                _ghHost.GetHost(), project, null, _credentials, _console);
+            CheckRequiredCheckRuns(graphqlApi, project, prData);
+        }
+        else
+        {
+            CheckRequiredCheckRuns(api, project, prData);
+        }
         CheckReviewApprovers(api, project, prData, labels);
 
         _console.ProgressFmt(
@@ -400,6 +410,7 @@ public class GitHubPrOrigin : IOrigin<GitRevision>
 
         string mergeBase = GetRepository().MergeBase(refForMigration, LocalPrBaseBranch);
         labels.Put(GithubBaseBranchSha1, mergeBase);
+        labels.Put(GithubBaseBranchSha, mergeBase);
 
         labels.Put(GithubPrTitle, prData.GetTitle() ?? "");
         labels.Put(GithubPrBody, prData.GetBody() ?? "");
@@ -522,37 +533,74 @@ public class GitHubPrOrigin : IOrigin<GitRevision>
                 requiredCheckRuns.Count <= ManualCheckRunLookupThreshold
                     ? GetCheckRunsByName(api, project, prData, requiredCheckRuns)
                     : GetCheckRuns(api, project, prData);
+            ValidateRequiredCheckRuns(observedCheckRuns, requiredCheckRuns, project, prData);
+        }
+    }
 
-            var missing = new List<string>();
-            foreach (string requiredCheckRun in requiredCheckRuns)
-            {
-                if (!observedCheckRuns.ContainsKey(requiredCheckRun))
-                {
-                    missing.Add(requiredCheckRun);
-                    continue;
-                }
-                var matchingCheckRuns = observedCheckRuns.Get(requiredCheckRun);
-                _console.WarnFmtIf(
-                    matchingCheckRuns.Length > 1,
-                    "Matching check run with name '{0}' seen {1} times. Consider using a more"
-                        + " specific name to avoid ambiguity. The instances of this check run are: {2}",
-                    requiredCheckRun,
-                    matchingCheckRuns.Length,
-                    string.Join(", ", matchingCheckRuns.Select(e => e.ToString())));
-                bool hasMatch = matchingCheckRuns.Any(e => e.GetConclusion() == "success");
-                if (!hasMatch)
-                {
-                    missing.Add(requiredCheckRun);
-                }
-            }
+    private void CheckRequiredCheckRuns(
+        GitHubGraphQLApi api, string project, PullRequest prData)
+    {
+        var requiredCheckRuns = GetRequiredCheckRuns();
+        if (ForceImport() || requiredCheckRuns.Count == 0)
+        {
+            return;
+        }
 
-            if (missing.Count != 0)
+        int slash = project.IndexOf('/');
+        string owner = project.Substring(0, slash);
+        string repo = project.Substring(slash + 1);
+
+        var checkRuns = api
+            .GetCheckRunsByNameFilterAsync(owner, repo, prData.GetHead()!.GetSha()!, requiredCheckRuns)
+            .GetAwaiter()
+            .GetResult();
+
+        var checkRunsByName = ImmutableListMultimap<string, CheckRun>.CreateBuilder();
+        foreach (CheckRun run in checkRuns)
+        {
+            if (run.GetName() != null)
             {
-                throw new EmptyChangeException(
-                    $"Cannot migrate http://github.com/{project}/pull/{prData.GetNumber()} because"
-                        + " the following check runs have not been passed: ["
-                        + string.Join(", ", missing.Distinct()) + "]");
+                checkRunsByName.Put(run.GetName()!, run);
             }
+        }
+        ValidateRequiredCheckRuns(checkRunsByName.Build(), requiredCheckRuns, project, prData);
+    }
+
+    private void ValidateRequiredCheckRuns(
+        ImmutableListMultimap<string, CheckRun> observedCheckRuns,
+        IReadOnlySet<string> requiredCheckRuns,
+        string project,
+        PullRequest prData)
+    {
+        var missing = new List<string>();
+        foreach (string requiredCheckRun in requiredCheckRuns)
+        {
+            if (!observedCheckRuns.ContainsKey(requiredCheckRun))
+            {
+                missing.Add(requiredCheckRun);
+                continue;
+            }
+            var matchingCheckRuns = observedCheckRuns.Get(requiredCheckRun);
+            _console.WarnFmtIf(
+                matchingCheckRuns.Length > 1,
+                "Matching check run with name '{0}' seen {1} times. Consider using a more"
+                    + " specific name to avoid ambiguity. The instances of this check run are: {2}",
+                requiredCheckRun,
+                matchingCheckRuns.Length,
+                string.Join(", ", matchingCheckRuns.Select(e => e.ToString())));
+            bool hasMatch = matchingCheckRuns.Any(e => e.GetConclusion() == "success");
+            if (!hasMatch)
+            {
+                missing.Add(requiredCheckRun);
+            }
+        }
+
+        if (missing.Count != 0)
+        {
+            throw new EmptyChangeException(
+                $"Cannot migrate http://github.com/{project}/pull/{prData.GetNumber()} because"
+                    + " the following check runs have not been passed: ["
+                    + string.Join(", ", missing.Distinct()) + "]");
         }
     }
 
@@ -900,10 +948,17 @@ public class GitHubPrOrigin : IOrigin<GitRevision>
         public override IReadOnlyList<GitRevision> FindBaselinesWithoutLabel(
             GitRevision startRevision, int limit)
         {
-            var baselineLabels = startRevision.AssociatedLabels().Get(GithubBaseBranchSha1);
-            string? baseline = baselineLabels.Length > 0 ? baselineLabels[^1] : null;
+            var shaLabels = startRevision.AssociatedLabels().Get(GithubBaseBranchSha);
+            string? baseline = shaLabels.Length > 0 ? shaLabels[^1] : null;
+            if (baseline == null)
+            {
+                // Fall back to the deprecated SHA-1 specific label for revisions recorded before
+                // GITHUB_BASE_BRANCH_SHA existed.
+                var sha1Labels = startRevision.AssociatedLabels().Get(GithubBaseBranchSha1);
+                baseline = sha1Labels.Length > 0 ? sha1Labels[^1] : null;
+            }
             Preconditions.CheckNotNull(
-                baseline, "{0} label should be present in {1}", GithubBaseBranchSha1, startRevision);
+                baseline, "{0} label should be present in {1}", GithubBaseBranchSha, startRevision);
 
             GitRevision baselineRev = GetRepository().ResolveReference(baseline!);
             // Don't skip the first change as it is already the baseline.

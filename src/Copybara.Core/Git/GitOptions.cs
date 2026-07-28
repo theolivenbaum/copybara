@@ -135,30 +135,56 @@ public class GitOptions : IOption
 
     public string GetRepoStorage() => _generalOptions.GetDirFactory().GetCacheDir("git_repos");
 
-    public GitRepository CachedBareRepoForUrl(string url)
+    public GitRepository CachedBareRepoForUrl(string url) =>
+        CachedBareRepoForUrl(url, fetchUrl: url);
+
+    /// <summary>
+    /// Returns a newly initialized bare repository created at a cache location resolved from
+    /// <paramref name="cacheUrl"/>, additionally validating the repository object format against
+    /// the remote <paramref name="fetchUrl"/>.
+    /// </summary>
+    /// <param name="cacheUrl">the url used to resolve the local directory name in the cache.</param>
+    /// <param name="fetchUrl">
+    /// the remote url used to check the repository object format, or null to skip the check.
+    /// </param>
+    public GitRepository CachedBareRepoForUrl(string cacheUrl, string? fetchUrl)
     {
-        Preconditions.CheckNotNull(url);
+        Preconditions.CheckNotNull(cacheUrl);
         try
         {
-            return CreateBareRepo(_generalOptions, FileUtil.ResolveDirInCache(url, GetRepoStorage()));
+            return CreateBareRepo(
+                _generalOptions, FileUtil.ResolveDirInCache(cacheUrl, GetRepoStorage()), fetchUrl);
         }
         catch (IOException e)
         {
-            throw new RepoException("Cannot create a cached repo for " + url, e);
+            throw new RepoException("Cannot create a cached repo for " + cacheUrl, e);
         }
     }
 
     /// <summary>Create a newly initialized repository from the cached location.</summary>
-    public GitRepository CachedBareRepoForUrl(string url, IGitRepositoryHook? gitRepositoryHook)
+    public GitRepository CachedBareRepoForUrl(string url, IGitRepositoryHook? gitRepositoryHook) =>
+        CachedBareRepoForUrl(url, fetchUrl: url, gitRepositoryHook);
+
+    /// <summary>
+    /// Returns a newly initialized bare repository created at a cache location resolved from
+    /// <paramref name="cacheUrl"/> using the specified checkout hook, additionally validating the
+    /// repository object format against the remote <paramref name="fetchUrl"/>.
+    /// </summary>
+    public GitRepository CachedBareRepoForUrl(
+        string cacheUrl, string? fetchUrl, IGitRepositoryHook? gitRepositoryHook)
     {
-        Preconditions.CheckNotNull(url);
+        Preconditions.CheckNotNull(cacheUrl);
         try
         {
-            return CreateBareRepo(_generalOptions, FileUtil.ResolveDirInCache(url, GetRepoStorage()));
+            return CreateBareRepo(
+                _generalOptions,
+                FileUtil.ResolveDirInCache(cacheUrl, GetRepoStorage()),
+                gitRepositoryHook,
+                fetchUrl);
         }
         catch (IOException e)
         {
-            throw new RepoException("Cannot create a cached repo for " + url, e);
+            throw new RepoException("Cannot create a cached repo for " + cacheUrl, e);
         }
     }
 
@@ -170,7 +196,15 @@ public class GitOptions : IOption
         new(env, NoGitPrompt);
 
     /// <summary>Create a new initialized repository in the location.</summary>
-    public virtual GitRepository CreateBareRepo(GeneralOptions generalOptions, string path)
+    public GitRepository CreateBareRepo(GeneralOptions generalOptions, string path) =>
+        CreateBareRepo(generalOptions, path, fetchUrl: null);
+
+    /// <summary>
+    /// Create a new initialized repository in the location, checking and configuring the repository
+    /// object format to match the remote <paramref name="fetchUrl"/> (null to skip the check).
+    /// </summary>
+    public virtual GitRepository CreateBareRepo(
+        GeneralOptions generalOptions, string path, string? fetchUrl)
     {
         GitRepository repo =
             GitRepository.NewBareRepo(
@@ -180,17 +214,33 @@ public class GitOptions : IOption
                 generalOptions.RepoTimeout,
                 GitNoVerify,
                 GetPushOptionsValidator());
-        return InitRepo(repo);
+        return InitRepo(repo, fetchUrl);
     }
 
     /// <summary>Create a new initialized repository in the location.</summary>
     public GitRepository CreateBareRepo(
         GeneralOptions generalOptions, string path, IGitRepositoryHook? gitRepositoryHook) =>
-        CreateBareRepo(generalOptions, path);
+        CreateBareRepo(generalOptions, path, gitRepositoryHook, fetchUrl: null);
 
-    public virtual GitRepository InitRepo(GitRepository repo)
+    /// <summary>
+    /// Create a new initialized repository in the location with the specified checkout hook,
+    /// checking and configuring the repository object format to match the remote
+    /// <paramref name="fetchUrl"/> (null to skip the check).
+    /// </summary>
+    public GitRepository CreateBareRepo(
+        GeneralOptions generalOptions,
+        string path,
+        IGitRepositoryHook? gitRepositoryHook,
+        string? fetchUrl) =>
+        // TODO(port): NewBareRepo has no gitRepositoryHook overload yet, so the hook is dropped here
+        // just as it was before fetchUrl was threaded through.
+        CreateBareRepo(generalOptions, path, fetchUrl);
+
+    public GitRepository InitRepo(GitRepository repo) => InitRepo(repo, fetchUrl: null);
+
+    public virtual GitRepository InitRepo(GitRepository repo, string? fetchUrl)
     {
-        repo.Init();
+        repo.Init(fetchUrl);
         if (NoCredentialHelperStore)
         {
             return repo;

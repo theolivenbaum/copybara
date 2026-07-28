@@ -46,7 +46,7 @@ public class DestinationStatusVisitor : IChangesVisitor
             {
                 foreach (var file in changeFiles)
                 {
-                    if (_pathMatcher.Matches("/" + file))
+                    if (_pathMatcher.Matches(file))
                     {
                         var values = change.GetLabels().Get(_labelName);
                         string lastRev = values[values.Length - 1];

@@ -27,6 +27,7 @@ public class TablePrinter
     private readonly ImmutableArray<string> _headers;
     private readonly List<IReadOnlyList<string>> _rows = new();
     private readonly int[] _columnWidths;
+    private readonly object _lock = new();
 
     public TablePrinter(params string[] header)
     {
@@ -50,10 +51,13 @@ public class TablePrinter
         var strings = row
             .Select(o => ("" + o).Replace("\n", ""))
             .ToImmutableArray();
-        _rows.Add(strings);
-        for (int col = 0; col < strings.Length; col++)
+        lock (_lock)
         {
-            _columnWidths[col] = Math.Max(strings[col].Length, _columnWidths[col]);
+            _rows.Add(strings);
+            for (int col = 0; col < strings.Length; col++)
+            {
+                _columnWidths[col] = Math.Max(strings[col].Length, _columnWidths[col]);
+            }
         }
         return this;
     }
@@ -61,22 +65,31 @@ public class TablePrinter
     /// <summary>Build the table.</summary>
     public IReadOnlyList<string> Build()
     {
-        var lines = new List<string>
+        lock (_lock)
         {
-            PrintRow('+', '-', ImmutableArray<string>.Empty),
-            PrintRow('|', ' ', _headers),
-            PrintRow('+', '-', ImmutableArray<string>.Empty),
-        };
-        foreach (var row in _rows)
-        {
-            lines.Add(PrintRow('|', ' ', row));
+            var lines = new List<string>
+            {
+                PrintRow('+', '-', ImmutableArray<string>.Empty),
+                PrintRow('|', ' ', _headers),
+                PrintRow('+', '-', ImmutableArray<string>.Empty),
+            };
+            foreach (var row in _rows)
+            {
+                lines.Add(PrintRow('|', ' ', row));
+            }
+            lines.Add(PrintRow('+', '-', ImmutableArray<string>.Empty));
+            return lines;
         }
-        lines.Add(PrintRow('+', '-', ImmutableArray<string>.Empty));
-        return lines;
     }
 
     /// <summary>Build the table into a single newline-joined string.</summary>
-    public string Print() => string.Join('\n', Build());
+    public string Print()
+    {
+        lock (_lock)
+        {
+            return string.Join('\n', Build());
+        }
+    }
 
     private string PrintRow(char delim, char filler, IReadOnlyList<string> vals)
     {

@@ -176,16 +176,17 @@ public static class WorkflowModeRunner
 
         runHelper.MaybeValidateRepoInLastRevState(metadata: null);
 
-        bool useIterativeMergeImport = runHelper.GetGeneralOptions()
-            .IsTemporaryFeature("experimental_iterative_merge_import", false);
-        O? originBaseline =
-            useIterativeMergeImport ? runHelper.GetOriginBaselineForMergeImport(lastRev) : null;
-
-        if (useIterativeMergeImport && runHelper.IsMergeImport())
+        if (runHelper.GetGeneralOptions()
+            .IsTemporaryFeature("experimental_iterative_merge_import", false))
         {
             runHelper.GetConsole().Warn(
-                "Iterative Merge Import is experimental. Please monitor the generated changelists.");
+                "The 'experimental_iterative_merge_import' temporary feature flag is deprecated and"
+                    + " will be removed soon.");
         }
+
+        // We are ignoring the flag value as part of the rollout of its removal.
+        O? originBaseline =
+            runHelper.IsMergeImport() ? runHelper.GetOriginBaselineForMergeImport(lastRev) : null;
 
         var migrated = new LinkedList<object>();
         int migratedChanges = 0;
@@ -265,7 +266,7 @@ public static class WorkflowModeRunner
                     throw new ChangeRejectedException(message);
                 }
             }
-            if (useIterativeMergeImport)
+            if (runHelper.IsMergeImport())
             {
                 lastRev = change.GetRevision();
                 originBaseline = change.GetRevision();

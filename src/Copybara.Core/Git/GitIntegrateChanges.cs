@@ -18,6 +18,7 @@ using System.Collections.Immutable;
 using System.Text;
 using Copybara.Common;
 using Copybara.Exceptions;
+using Copybara.TemplateToken;
 using Copybara.Util;
 using Starlark.Annot;
 using Starlark.Eval;
@@ -32,15 +33,37 @@ namespace Copybara.Git;
 [StarlarkBuiltin("git_integrate", Doc = "", Documented = false)]
 public sealed class GitIntegrateChanges : IStarlarkValue
 {
+    private static readonly LabelTemplate DefaultMergeMsgTemplate = new("${MERGE_MSG}");
+
     private readonly string _label;
     private readonly Strategy _strategy;
     private readonly bool _ignoreErrors;
+    private readonly bool _allowUnrelatedHistory;
+    private readonly LabelTemplate _mergeCommitMessage;
 
     internal GitIntegrateChanges(string label, Strategy strategy, bool ignoreErrors)
+        : this(label, strategy, ignoreErrors, allowUnrelatedHistory: false)
+    {
+    }
+
+    internal GitIntegrateChanges(
+        string label, Strategy strategy, bool ignoreErrors, bool allowUnrelatedHistory)
+        : this(label, strategy, ignoreErrors, allowUnrelatedHistory, DefaultMergeMsgTemplate)
+    {
+    }
+
+    internal GitIntegrateChanges(
+        string label,
+        Strategy strategy,
+        bool ignoreErrors,
+        bool allowUnrelatedHistory,
+        LabelTemplate mergeCommitMessage)
     {
         _label = Preconditions.CheckNotNull(label);
         _strategy = strategy;
         _ignoreErrors = ignoreErrors;
+        _allowUnrelatedHistory = allowUnrelatedHistory;
+        _mergeCommitMessage = Preconditions.CheckNotNull(mergeCommitMessage);
     }
 
     /// <summary>
@@ -138,7 +161,10 @@ public sealed class GitIntegrateChanges : IStarlarkValue
                         generalOptions.GetConsole(),
                         generalOptions.GetDirFactory(),
                         generalOptions.IsTemporaryFeature(
-                            "GIT_INTEGRATE_FAIL_IF_COMMON_BASELINE_NOT_FOUND", false));
+                            "GIT_INTEGRATE_FAIL_IF_COMMON_BASELINE_NOT_FOUND", true),
+                        _allowUnrelatedHistory,
+                        _mergeCommitMessage,
+                        result);
                     optionalIntegrateLabel = integrateLabel;
                 }
                 catch (ValidationException e)
@@ -202,19 +228,24 @@ public sealed class GitIntegrateChanges : IStarlarkValue
             GitDestination.MessageInfo messageInfo,
             Console console,
             DirFactory dirFactory,
-            bool failIfIntegrateCommitNotFound)
+            bool failIfIntegrateCommitNotFound,
+            bool allowUnrelatedHistory,
+            LabelTemplate mergeCommitMessage,
+            TransformResult result)
         {
             switch (_kind)
             {
                 case StrategyKind.FakeMerge:
                     IntegrateFakeMerge(
                         repository, integrateLabel, messageInfo, console,
-                        failIfIntegrateCommitNotFound);
+                        failIfIntegrateCommitNotFound, allowUnrelatedHistory, mergeCommitMessage,
+                        result);
                     break;
                 case StrategyKind.FakeMergeAndIncludeFiles:
                     IntegrateFakeMerge(
                         repository, integrateLabel, messageInfo, console,
-                        failIfIntegrateCommitNotFound);
+                        failIfIntegrateCommitNotFound, allowUnrelatedHistory, mergeCommitMessage,
+                        result);
                     IntegrateIncludeFiles(
                         repository, integrateLabel, externalFiles, rawLabelValue, console,
                         failIfIntegrateCommitNotFound);
@@ -234,11 +265,15 @@ public sealed class GitIntegrateChanges : IStarlarkValue
             IIntegrateLabel integrateLabel,
             GitDestination.MessageInfo messageInfo,
             Console console,
-            bool failIfIntegrateCommitNotFound)
+            bool failIfIntegrateCommitNotFound,
+            bool allowUnrelatedHistory,
+            LabelTemplate mergeCommitMessage,
+            TransformResult result)
         {
             GitRepository.GitLogEntry head = GetHeadCommit(repository);
 
-            if (FindCommonBaseline(
+            if (!allowUnrelatedHistory
+                && FindCommonBaseline(
                     repository, integrateLabel, head, failIfIntegrateCommitNotFound, console) == null)
             {
                 console.WarnFmt(
@@ -249,7 +284,33 @@ public sealed class GitIntegrateChanges : IStarlarkValue
                 return;
             }
 
-            string msg = integrateLabel.MergeMessage(messageInfo.LabelsToAdd);
+            string defaultMergeMessage = integrateLabel.MergeMessage(messageInfo.LabelsToAdd);
+
+            string? CustomLabelFinder(string name)
+            {
+                if (name == "SUMMARY_FROM_TRANSFORM")
+                {
+                    return result.GetSummary();
+                }
+                if (name == "MERGE_MSG")
+                {
+                    return defaultMergeMessage;
+                }
+                var values = result.GetLabelFinder()(name);
+                return values == null || values.Count == 0 ? null : values.First();
+            }
+
+            string msg;
+            try
+            {
+                msg = mergeCommitMessage.Resolve(CustomLabelFinder);
+            }
+            catch (LabelTemplate.LabelNotFoundException e)
+            {
+                throw new CannotIntegrateException(
+                    $"Cannot find '{e.Label}' label for template '{mergeCommitMessage}'", e);
+            }
+
             // If there is already a merge, don't overwrite the merge but create a new one.
             // Otherwise amend the last commit as a merge.
             GitRevision commit;
@@ -444,15 +505,25 @@ public sealed class GitIntegrateChanges : IStarlarkValue
     public override bool Equals(object? o) =>
         o is GitIntegrateChanges that
         && _ignoreErrors == that._ignoreErrors
+        && _allowUnrelatedHistory == that._allowUnrelatedHistory
         && _label == that._label
-        && ReferenceEquals(_strategy, that._strategy);
+        && ReferenceEquals(_strategy, that._strategy)
+        && Equals(_mergeCommitMessage, that._mergeCommitMessage);
 
     public Strategy GetStrategy() => _strategy;
 
     public string GetLabel() => _label;
 
-    public override int GetHashCode() => HashCode.Combine(_label, _strategy, _ignoreErrors);
+    public bool IsAllowUnrelatedHistory() => _allowUnrelatedHistory;
+
+    public LabelTemplate GetMergeCommitMessage() => _mergeCommitMessage;
+
+    public override int GetHashCode() =>
+        HashCode.Combine(
+            _label, _strategy, _ignoreErrors, _allowUnrelatedHistory, _mergeCommitMessage);
 
     public override string ToString() =>
-        $"GitIntegrateChanges{{label={_label}, strategy={_strategy}, ignoreErrors={_ignoreErrors}}}";
+        $"GitIntegrateChanges{{label={_label}, strategy={_strategy}, ignoreErrors={_ignoreErrors}"
+            + $", allowUnrelatedHistory={_allowUnrelatedHistory}"
+            + $", mergeCommitMessage={_mergeCommitMessage}}}";
 }

@@ -171,6 +171,83 @@ Intentionally NOT ported (superseded/obsolete): `jcommander/*` converters/valida
 
 ---
 
+## Upstream sync log
+
+Tracks merges of `google/copybara` master into `java/` and what each one implied for
+the C# port.
+
+### Sync: `80d188e` → `5be2789` (23 commits, 2026-07)
+
+Ported to C#:
+
+- `055fac9` empty-root glob/matcher fix — `GlobAtom.GetRelativePath` and
+  `ReadablePathMatcher.RelativeGlob` already guarded the empty root (string paths), so
+  the only live bug was `DestinationStatusVisitor` prepending `"/"` to change files;
+  that prefix is gone. Regression tests added.
+- `f5188fb` resolve `ConsistencyFileConfiguration` before `MergeImportConfiguration` in
+  `CoreModule.Workflow` so `use_consistency_file` is derived from the resolved config.
+- `ef45e5b` `experimental_iterative_merge_import` deprecated: `WorkflowModeRunner`
+  ignores the flag value (warns when set) and keys iterative merge-import baseline
+  tracking off `IsMergeImport()`.
+- `6bd7119` `GIT_INTEGRATE_FAIL_IF_COMMON_BASELINE_NOT_FOUND` default flipped to `true`
+  (`GitIntegrateChanges`, `GitModule`).
+- `f538bf2` `git.integrate(allow_unrelated_history = …)`.
+- `662e658` `git.integrate(merge_commit_message = …)` with `${MERGE_MSG}` /
+  `${SUMMARY_FROM_TRANSFORM}` / `TransformResult` labels; `LabelTemplate` gained
+  value equality + `ToString`.
+- `f766499` generic `GITHUB_BASE_BRANCH_SHA` label alongside the deprecated
+  `GITHUB_BASE_BRANCH_SHA1`, with fallback in `GitHubPrOrigin.FindBaselinesWithoutLabel`
+  and `GitHubPreSubmitApprovalsProvider`.
+- `d332c42` + `ca0d8d6` object-format-aware init: `GitRepository.Init(string? fetchUrl)`
+  wipes/re-inits a cached repo whose local hash algorithm disagrees with the remote;
+  `GitOptions.CachedBareRepoForUrl`/`CreateBareRepo`/`InitRepo` thread `fetchUrl`
+  through; `GitOrigin` and `GitDestinationOptions` pass the real remote url. SHA-1 →
+  SHA doc/naming cleanup applied to user-visible Starlark docs.
+- `8152f4a` `TablePrinter` `AddRow`/`Build`/`Print` guarded by a lock.
+- `e8a951f` `Consoles.PrintCauseChain` collects suppressed exceptions into a mutable
+  list while walking the cause chain (mapped to `AggregateException.InnerExceptions`).
+- `dad187c` `PatchingOptions.QuiltRefreshPatches` gates `quilt refresh`.
+- `672f04d` + `74ac397` `ConfigGenHeuristics`: destination excludes collapse into dir
+  globs via a new `DestinationExcludesGlob` scorer, and secondary similar destinations
+  become `core.copy` (`IGeneratorTransformation` / `GeneratorCopy`;
+  `GeneratorTransformations.GetMoves()` → `AsList()`).
+- `e06d08d` + `5be2789` GitHub GraphQL filtered check runs:
+  `GetFilteredCheckRunsResponse` (aliased `filter_N` connections read through
+  `[JsonExtensionData]`), `GitHubGraphQLApi.GetCheckRunsByNameFilterAsync`, and the
+  `use_graphql_api_for_check_runs` temporary-feature path in `GitHubPrOrigin`.
+  `CheckRun`/`CheckRun.CheckRunPullRequest`/`GitHubApp` gained value equality.
+
+Deliberately NOT ported (recorded here so the next sync doesn't re-litigate it):
+
+- `c0c4a3c` + `930549a` + `55bd624` + `94cb8c7` — re-vendoring of
+  `net.starlark.java` from Bazel master, which lands the **Starlark static type
+  system** (`syntax/TypeTable`, `Types`, `TypeTagger`, `TypeChecker`, `StarlarkType`,
+  `TypeConstructor(Value)`, `eval/CompactImmutableDict`, `Compactable`, plus a new
+  `annot/StarlarkLibrary` annotation replacing `doc/annotations/Library` and a rule
+  that `@StarlarkMethod` Java names must be unique across a `@StarlarkBuiltin`
+  hierarchy). ~4.7k changed/new lines in the interpreter alone, none of it required
+  for `copy.bara.sky` compatibility (the type syntax is off by default via
+  `FileOptions`). Port as its own phase if/when configs start using type
+  annotations. The `@StarlarkBuiltin` annotations upstream added to
+  `ActionContext`, `CheckoutFileSystem`, `GoVersionObject`, `PullRequestOrIssue`,
+  `Repository`, `CheckRun.PullRequest` exist only to satisfy that new interpreter
+  restriction and are not needed by this port's dispatcher.
+- `dad187c`'s `RegenerateCmd` half — `RegenerateCmd` is not ported yet (see Phase 7).
+  The knob it flips (`PatchingOptions.QuiltRefreshPatches = false`) is in place, so the
+  adapter just needs to set it.
+- `6c1aaa3`, `99ab4eb`, `33a7e6c`-style test-only and formatting changes.
+
+Known gaps surfaced while reviewing this sync (pre-existing, not caused by it):
+
+- `MergeImportTool` has no C# counterpart at all; `Workflow` references merge-import
+  config but the tool itself is missing.
+- `AutoPatchUtil` still does `fileMatcher.RelativeTo("").Matches("/" + name)`, which
+  cannot match now that relative matchers stay relative. Upstream has the identical
+  bug (it was not fixed by `055fac9`), so the port was left alone — fix both or file
+  upstream.
+
+---
+
 ## Cross-cutting decisions / open questions
 
 - ✅ **RE2 vs .NET Regex** — DECIDED: use the native .NET regex engine

@@ -69,11 +69,15 @@ public static class Consoles
         LogLevel level, Console console, string[] args, Exception e, ILogger? logger = null)
     {
         var error = new StringBuilder(e.Message).Append('\n');
-        var suppressed = new List<Exception>();
+        // The list must stay mutable: exceptions suppressed further down the cause chain get
+        // appended to it while walking the chain. .NET's closest analogue to Java's suppressed
+        // exceptions is AggregateException.InnerExceptions.
+        var suppressed = new List<Exception>(GetSuppressed(e));
         Exception? cause = e.InnerException;
         while (cause != null)
         {
             error.Append("  CAUSED BY: ").Append(PrintException(cause)).Append('\n');
+            suppressed.AddRange(GetSuppressed(cause));
             cause = cause.InnerException;
         }
         foreach (Exception t in suppressed)
@@ -83,6 +87,16 @@ public static class Consoles
         console.Error(error.ToString());
         logger?.Log(level, e, "{Message}", FormatLogError(e.Message, args));
     }
+
+    /// <summary>
+    /// Returns the exceptions "suppressed" by <paramref name="t"/>. Java records these on any
+    /// <c>Throwable</c>; in .NET the equivalent is the set of inner exceptions of an
+    /// <see cref="AggregateException"/> other than the one already reported as the cause.
+    /// </summary>
+    private static IEnumerable<Exception> GetSuppressed(Exception t) =>
+        t is AggregateException aggregate
+            ? aggregate.InnerExceptions.Where(inner => !ReferenceEquals(inner, t.InnerException))
+            : Enumerable.Empty<Exception>();
 
     private static string? PrintException(Exception t)
     {
