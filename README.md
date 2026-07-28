@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" alt="Copybara logo" width="180" />
+  <img src="https://raw.githubusercontent.com/theolivenbaum/copybara/master/assets/icon.png" alt="Copybara logo" width="180" />
 </p>
 
 # Copybara for .NET
@@ -77,13 +77,20 @@ dotnet build Copybara.slnx
 dotnet test  Copybara.slnx
 ```
 
+## Installing
+
+```bash
+dotnet tool install --global Copybara
+copybara migrate copy.bara.sky
+```
+
 ## Running
 
 ```bash
 # From source:
 dotnet run --project src/Copybara.Cli -- migrate copy.bara.sky
 
-# Packaged as a global tool:
+# Packaged as a global tool from a local build:
 dotnet pack src/Copybara.Cli -c Release
 dotnet tool install --global --add-source src/Copybara.Cli/nupkg Copybara
 copybara migrate copy.bara.sky

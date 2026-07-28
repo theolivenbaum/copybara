@@ -8,10 +8,11 @@
     <PackageId>Copybara</PackageId>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <Version>0.1.0</Version>
-    <Description>A tool for transforming and moving code between repositories (.NET port of Google Copybara).</Description>
+    <Title>Copybara for .NET</Title>
+    <Description>A tool for transforming and moving code between repositories (.NET port of Google Copybara). Installs the `copybara` command; workflows are declared in Starlark in a copy.bara.sky file.</Description>
     <PackageIcon>icon.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>copybara;git;migration;vcs;starlark;code-transformation</PackageTags>
+    <PackageTags>copybara;git;migration;vcs;starlark;code-transformation;dotnet-tool</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Copybara.Core\Copybara.Core.csproj" />

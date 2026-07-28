@@ -6,9 +6,22 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <Authors>Copybara .NET Port</Authors>
-    <Company>Copybara</Company>
-    <RepositoryUrl>https://github.com/theolivenbaum/copybara</RepositoryUrl>
+  </PropertyGroup>
+
+  <!-- Package metadata shared by every packable project in the solution. -->
+  <PropertyGroup>
+    <Authors>Copybara .NET Port contributors</Authors>
+    <Company>Copybara .NET Port</Company>
+    <Copyright>Copyright (c) 2016 Google LLC; .NET port copyright (c) 2026 Copybara .NET Port contributors</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageProjectUrl>https://github.com/theolivenbaum/copybara</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/theolivenbaum/copybara</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <!-- Source Link: record the commit/repo in the package and resolve sources from GitHub. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <!-- Deterministic builds when running on a CI agent. -->
+    <ContinuousIntegrationBuild Condition="'$(TF_BUILD)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 </Project>

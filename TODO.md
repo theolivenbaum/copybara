@@ -159,7 +159,15 @@ Intentionally NOT ported (superseded/obsolete): `jcommander/*` converters/valida
   module set creation, command dispatch, exit codes, error handling.
 - ✅ Commands: `MigrateCmd`, `InfoCmd`, `ValidateCmd` (+ version/help).
 - ⬜ Commands not yet ported: `RegenerateCmd`, `OnboardCmd`/`GeneratorCmd`.
-- ✅ `PackAsTool` + package icon/readme. ⬜ `build-data` version embedding.
+- ✅ `PackAsTool` + full NuGet metadata (icon, readme, license expression, copyright,
+  project/repository URL, tags, Source Link).
+- ✅ Version reporting: `Main.GetBuildInfo()` reads
+  `AssemblyInformationalVersionAttribute` (the .NET equivalent of upstream's
+  `/build-data.properties`), so `copybara version` reports the packed version plus the
+  commit SHA when Source Link is on.
+- ✅ CI: `.devops/build-nuget.yml` (Azure DevOps) — CalVer `yy.M.<buildId>`, restore →
+  build → test → pack the tool → push to nuget.org via the `nuget-curiosity-org`
+  service connection. Mirrors `curiosity-ai/hnsw-sharp`'s pipeline.
 
 ## Phase 8 — Tests, docs, polish
 
