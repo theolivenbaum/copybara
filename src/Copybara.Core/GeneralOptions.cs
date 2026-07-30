@@ -255,8 +255,9 @@ public sealed class GeneralOptions : IOption
     /// <summary>
     /// Returns a <see cref="DirFactory"/> capable of creating directories in a self contained
     /// location in the filesystem.
-    /// <para>By default, the directories are created under <c>$HOME/copybara</c>, but it can be
-    /// overridden with the flag --output-root.</para>
+    /// <para>By default, the directories are created under the user's home directory (resolved via
+    /// the <c>HOME</c> environment variable, falling back to <see cref="Environment.SpecialFolder.UserProfile"/>)
+    /// at <c>copybara</c>, but it can be overridden with the flag --output-root.</para>
     /// </summary>
     public DirFactory GetDirFactory()
     {
@@ -266,9 +267,11 @@ public sealed class GeneralOptions : IOption
             return new DirFactory(outputRoot);
         }
 
-        var home = _environment.TryGetValue("HOME", out var h) ? h : null;
-        Preconditions.CheckNotNull(home, "$HOME environment var is not set");
-        return new DirFactory(Path.Combine(home!, "copybara"));
+        var home = _environment.TryGetValue("HOME", out var h) && !string.IsNullOrEmpty(h)
+            ? h
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Preconditions.CheckArgument(!string.IsNullOrEmpty(home), "Could not determine the user's home directory");
+        return new DirFactory(Path.Combine(home, "copybara"));
     }
 
     public void SetEnvironmentForTest(IReadOnlyDictionary<string, string> environment)
